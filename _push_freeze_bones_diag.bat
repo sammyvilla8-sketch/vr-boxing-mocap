@@ -7,9 +7,9 @@ git reset
 echo === Staging only what changed ===
 git add index.html _push_freeze_bones_diag.bat
 echo === Committing ===
-git commit -m "Debug panel: rotation sliders, stick fig manual override, T-pose snapshot, freeze bones diag"
+git commit -m "T-pose 3s countdown + popout keeps debug panel + popout sliders drive opener APP"
 echo === Pushing ===
 git push origin main
 echo.
-echo === DONE ===
+echo === DONE — close window and reload page with ?fresh=1 ===
 pause

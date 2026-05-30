@@ -101,7 +101,14 @@
   body.popout-mode #app { grid-template-columns: 1fr; grid-template-rows: 1fr; }
   body.popout-mode #left, body.popout-mode #right, body.popout-mode #statusbar,
   body.popout-mode #video-panel, body.popout-mode #scene-overlay-controls,
-  body.popout-mode #timeline, body.popout-mode #uk1-progress { display:none !important; }
+  body.popout-mode #timeline, body.popout-mode #uk1-progress,
+  body.popout-mode #toast { display:none !important; }
+  /* Debug panel stays visible in 3D popout so Sammy can dial alignment
+     while watching the character — explicit per-user request. */
+  body.popout-mode #debug-panel {
+    display:block !important; position:absolute !important;
+    top:8px !important; right:8px !important; z-index:99 !important;
+  }
   body.popout-mode #center {
     grid-column: 1 / -1 !important;
     grid-row: 1 / -1 !important;
@@ -1825,25 +1832,46 @@ $("btn-tpose-calib").addEventListener("click", () => {
 // pipeline on it, then let the user dial UK1 + stick figure sliders into
 // visual alignment, then Save & Resume to bake the new calibration.
 $("btn-tpose-snapshot").addEventListener("click", () => {
-  if (!APP.lastResults || !APP.lastResults.poseLandmarks) {
-    toast("No live pose available. Start webcam and stand in T-pose first.", "error");
+  if (!APP.holistic) {
+    toast("Start webcam first.", "error");
     return;
   }
-  // Deep-copy the relevant landmark arrays so they're not mutated by future onResults
-  const cpyArr = (arr) => arr ? arr.map(lm => ({ ...lm })) : null;
-  APP.frozenSnapshot = {
-    poseLandmarks: cpyArr(APP.lastResults.poseLandmarks),
-    poseWorldLandmarks: cpyArr(APP.lastResults.poseWorldLandmarks),
-    faceLandmarks: cpyArr(APP.lastResults.faceLandmarks),
-    leftHandLandmarks: cpyArr(APP.lastResults.leftHandLandmarks),
-    rightHandLandmarks: cpyArr(APP.lastResults.rightHandLandmarks),
-  };
-  APP.frozenMode = true;
-  $("btn-tpose-save-resume").disabled = false;
-  $("btn-tpose-discard-resume").disabled = false;
+  // 3-second countdown so Sammy can get into T-pose before the snapshot fires.
   $("btn-tpose-snapshot").disabled = true;
-  $("frozen-status").style.display = "";
-  toast("Pose frozen. Dial sliders, then Save & Resume.", "success");
+  const statusEl = $("frozen-status");
+  statusEl.style.display = "";
+  statusEl.style.color = "var(--accent)";
+  let count = 3;
+  statusEl.textContent = "Get into T-pose... " + count;
+  toast("Get into T-pose — capturing in 3...", "");
+  const tick = setInterval(() => {
+    count -= 1;
+    if (count > 0) {
+      statusEl.textContent = "Get into T-pose... " + count;
+    } else {
+      clearInterval(tick);
+      if (!APP.lastResults || !APP.lastResults.poseLandmarks) {
+        statusEl.style.display = "none";
+        $("btn-tpose-snapshot").disabled = false;
+        toast("No live pose. Make sure webcam sees you and try again.", "error");
+        return;
+      }
+      // Deep-copy landmark arrays so they're not mutated by future onResults
+      const cpyArr = (arr) => arr ? arr.map(lm => ({ ...lm })) : null;
+      APP.frozenSnapshot = {
+        poseLandmarks: cpyArr(APP.lastResults.poseLandmarks),
+        poseWorldLandmarks: cpyArr(APP.lastResults.poseWorldLandmarks),
+        faceLandmarks: cpyArr(APP.lastResults.faceLandmarks),
+        leftHandLandmarks: cpyArr(APP.lastResults.leftHandLandmarks),
+        rightHandLandmarks: cpyArr(APP.lastResults.rightHandLandmarks),
+      };
+      APP.frozenMode = true;
+      $("btn-tpose-save-resume").disabled = false;
+      $("btn-tpose-discard-resume").disabled = false;
+      statusEl.innerHTML = "&#10074;&#10074; FROZEN — dial sliders, then Save &amp; Resume";
+      toast("Pose frozen. Dial sliders, then Save & Resume.", "success");
+    }
+  }, 1000);
 });
 
 $("btn-tpose-save-resume").addEventListener("click", () => {
@@ -3284,18 +3312,25 @@ function openPopoutCamera() {
   const degToRad = (d) => d * Math.PI / 180;
   const radToDeg = (r) => r * 180 / Math.PI;
 
+  // If running inside a 3D popout window, hijack the OPENER's APP/STICK so
+  // sliders mutate the main scene that's actually being rendered here.
+  const isPopout = (new URLSearchParams(location.search)).get("mode") === "popout";
+  function getAPP()   { return (isPopout && window.opener && window.opener.APP)   ? window.opener.APP   : window.APP; }
+  function getSTICK() { return (isPopout && window.opener && window.opener.STICK) ? window.opener.STICK : window.STICK; }
+
   // --- UK1 root rotation sliders ---
   const rotXEl = $$("dbg-rotX"), rotYEl = $$("dbg-rotY"), rotZEl = $$("dbg-rotZ");
   const rotXVal = $$("dbg-rotX-val"), rotYVal = $$("dbg-rotY-val"), rotZVal = $$("dbg-rotZ-val");
   function applyRootRot() {
-    if (!APP.charRoot) return;
-    const rx = degToRad(parseFloat(rotXEl.value) || 0);
-    const ry = degToRad(parseFloat(rotYEl.value) || 0);
-    const rz = degToRad(parseFloat(rotZEl.value) || 0);
-    APP.charRoot.rotation.set(rx, ry, rz);
+    const app = getAPP();
     rotXVal.textContent = rotXEl.value + "°";
     rotYVal.textContent = rotYEl.value + "°";
     rotZVal.textContent = rotZEl.value + "°";
+    if (!app || !app.charRoot) return;
+    const rx = degToRad(parseFloat(rotXEl.value) || 0);
+    const ry = degToRad(parseFloat(rotYEl.value) || 0);
+    const rz = degToRad(parseFloat(rotZEl.value) || 0);
+    app.charRoot.rotation.set(rx, ry, rz);
   }
   ["input","change"].forEach(ev => {
     rotXEl.addEventListener(ev, applyRootRot);
@@ -3324,25 +3359,29 @@ function openPopoutCamera() {
     sValEls.y.textContent = stickYEl.value;
     sValEls.z.textContent = stickZEl.value;
     sValEls.roty.textContent = stickRotYEl.value + "°";
-    if (!APP.stickOverride) return;
-    if (!window.STICK || !STICK.group) return;
-    STICK.group.scale.setScalar(parseFloat(stickScaleEl.value) || 1);
-    STICK.group.position.set(
+    const app = getAPP();
+    const stk = getSTICK();
+    if (!app || !app.stickOverride) return;
+    if (!stk || !stk.group) return;
+    stk.group.scale.setScalar(parseFloat(stickScaleEl.value) || 1);
+    stk.group.position.set(
       parseFloat(stickXEl.value) || 0,
       parseFloat(stickYEl.value) || 0,
       parseFloat(stickZEl.value) || 0
     );
-    STICK.group.rotation.y = degToRad(parseFloat(stickRotYEl.value) || 0);
+    stk.group.rotation.y = degToRad(parseFloat(stickRotYEl.value) || 0);
   }
   function updateStickSliderEnabled() {
-    const on = !!APP.stickOverride;
+    const app = getAPP();
+    const on = !!(app && app.stickOverride);
     [stickScaleEl, stickXEl, stickYEl, stickZEl, stickRotYEl].forEach(el => {
       el.disabled = !on;
       el.style.opacity = on ? "1" : "0.4";
     });
   }
   stickOverrideEl.addEventListener("change", () => {
-    APP.stickOverride = stickOverrideEl.checked;
+    const app = getAPP();
+    if (app) app.stickOverride = stickOverrideEl.checked;
     updateStickSliderEnabled();
     applyStickManual();
   });
@@ -3383,7 +3422,7 @@ function openPopoutCamera() {
       if (d.stickZ != null) stickZEl.value = d.stickZ;
       if (d.stickRotY != null) stickRotYEl.value = d.stickRotY;
       stickOverrideEl.checked = !!d.stickOverride;
-      APP.stickOverride = !!d.stickOverride;
+      const _app = getAPP(); if (_app) _app.stickOverride = !!d.stickOverride;
       applyRootRot();
       updateStickSliderEnabled();
       applyStickManual();
@@ -3400,22 +3439,25 @@ function openPopoutCamera() {
     if (now - lastReadout < 100) return;
     lastReadout = now;
 
+    const app = getAPP();
+    if (!app) return;
     // Hip bone euler
-    const hipBone = APP.charBones && APP.charBones.Hips;
+    const hipBone = app.charBones && app.charBones.Hips;
     if (hipBone) {
-      const e = new THREE.Euler().setFromQuaternion(hipBone.quaternion, "XYZ");
+      const THREEref = (isPopout && window.opener && window.opener.THREE) ? window.opener.THREE : window.THREE;
+      const e = new THREEref.Euler().setFromQuaternion(hipBone.quaternion, "XYZ");
       $$("dbg-hip-rot").textContent =
         `X=${radToDeg(e.x).toFixed(1)}° Y=${radToDeg(e.y).toFixed(1)}° Z=${radToDeg(e.z).toFixed(1)}°`;
     }
     // MediaPipe hip (last KalidoKit pose for Hips, raw)
-    const mpHip = APP.lastKalidoHips;
+    const mpHip = app.lastKalidoHips;
     if (mpHip) {
       $$("dbg-mp-hip").textContent =
         `X=${(mpHip.x||0).toFixed(2)} Y=${(mpHip.y||0).toFixed(2)} Z=${(mpHip.z||0).toFixed(2)}`;
     }
     // Calibration offset (T-pose KalidoKit Hips)
-    const cal = APP.calibrationBaseline && APP.calibrationBaseline.kalidoKitPose
-                && APP.calibrationBaseline.kalidoKitPose.Hips;
+    const cal = app.calibrationBaseline && app.calibrationBaseline.kalidoKitPose
+                && app.calibrationBaseline.kalidoKitPose.Hips;
     if (cal) {
       $$("dbg-cal-off").textContent =
         `X=${(cal.x||0).toFixed(2)} Y=${(cal.y||0).toFixed(2)} Z=${(cal.z||0).toFixed(2)}`;
@@ -3423,8 +3465,8 @@ function openPopoutCamera() {
       $$("dbg-cal-off").textContent = "(not calibrated)";
     }
     // Last MediaPipe frame age
-    if (APP.lastMpFrameTime) {
-      const age = (now - APP.lastMpFrameTime).toFixed(0);
+    if (app.lastMpFrameTime) {
+      const age = (now - app.lastMpFrameTime).toFixed(0);
       $$("dbg-mp-age").textContent = age + "ms";
     } else {
       $$("dbg-mp-age").textContent = "(no frames yet)";
