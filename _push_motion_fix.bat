@@ -1,21 +1,21 @@
 @echo off
 REM ============================================================
-REM Push the MediaPipe Holistic version pin + 2D fallback.
-REM Root cause: unpinned @mediapipe/holistic latest stopped emitting
-REM poseWorldLandmarks, killing the whole motion pipeline.
+REM Push: 2D fallback Y-flip + hip-center, leg-bone skip on
+REM low visibility, lock stick figure to rest bbox, default
+REM stick figure to overlap mode.
 REM ============================================================
 
 setlocal
 cd /d "%~dp0"
 
 echo.
-echo === VR Boxing Mocap: pin MediaPipe + 2D fallback ===
+echo === VR Boxing Mocap: tracking quality fixes ===
 echo Folder: %CD%
 echo.
 
 where git >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] git not on PATH. Install Git for Windows then re-run.
+  echo [ERROR] git not on PATH.
   pause
   exit /b 1
 )
@@ -26,7 +26,6 @@ if not exist .git (
   exit /b 1
 )
 
-REM Clean any stale .git/index.lock left behind by a crashed git
 if exist ".git\index.lock" (
   echo [step 0] removing stale .git\index.lock
   del /f /q ".git\index.lock"
@@ -47,9 +46,9 @@ git status --short
 echo.
 
 echo [step 2] git commit
-git commit -m "Pin MediaPipe Holistic to 0.5.1675471629 + add 2D fallback" -m "Bug: the unpinned @mediapipe/holistic/holistic.js on jsDelivr started returning poseLandmarks (2D, drives the webcam dots) without poseWorldLandmarks (3D world meters). Our onHolisticResults requires both, so it early-returned on every frame and never called driveCharacterFromPose or updateStickFigure. From the user's side this looked like 'tracking dots visible but nothing moves' — lostFrames climbing to 2948 with diagFrameCount undefined." -m "Fix part 1: pin the Holistic script tag and locateFile to the known-good version 0.5.1675471629 in both index.html and ipad.html." -m "Fix part 2: if poseWorldLandmarks is still missing for any reason, synthesize a pseudo-world array from poseLandmarks (center on 0.5, scale to ~1.75m body height). This means motion never fully dies on a future MediaPipe behavior change."
+git commit -m "Mocap quality: fix 2D fallback Y/hip, skip invisible legs, lock stick scale" -m "Diag from user showed pinned MediaPipe still doesn't emit poseWorldLandmarks (so we're always on the 2D fallback path), and the fallback had three issues that combined into 'noodle arms + legs through floor + stick figure jumping in size'." -m "Fix 1: 2D fallback flips Y (image-down -> world-up) and centers on hip midpoint (landmarks 23,24) instead of image midpoint. Matches what Kalidokit's runtime:'mediapipe' expects." -m "Fix 2: In driveCharacterFromPose, if max visibility across the MediaPipe landmarks driving a lower-body bone (knee/ankle/foot) is < 0.5, hold that bone in its rest pose. Desk-webcam framing usually only catches upper body — driving leg bones with garbage was contorting UK1's skinned mesh through the floor." -m "Fix 3: Cache UK1's bbox at model-load (T-pose) into APP.charRestBox. syncStickFigureToCharacter uses that stable reference instead of re-measuring the deformed skinned mesh every 60 frames — the stick figure no longer grows unboundedly when tracking glitches." -m "Fix 4: Default STICK.mode = 2 (overlap on top of UK1) instead of 1 (side-by-side off to the left). User explicitly asked for it on the character."
 if errorlevel 1 (
-  echo [info] Nothing to commit, or commit failed. Checking remote anyway...
+  echo [info] Nothing to commit, or commit failed.
 )
 
 echo.
@@ -57,19 +56,18 @@ echo [step 3] git push origin main
 git push origin main
 if errorlevel 1 (
   echo.
-  echo [ERROR] push failed. If it's an auth issue, run:
-  echo   git config --global credential.helper manager
-  echo Then re-run this script.
+  echo [ERROR] push failed.
   pause
   exit /b 1
 )
 
 echo.
 echo ===============================================================
-echo  PUSHED.
-echo  Desktop: https://sammyvilla8-sketch.github.io/vr-boxing-mocap/
-echo  iPad:    https://sammyvilla8-sketch.github.io/vr-boxing-mocap/ipad.html
-echo  Pages auto-rebuilds in 1-3 min. Hard-reload after.
+echo  PUSHED. Pages rebuilds in 1-3 min.
+echo  After hard-reload, expect:
+echo   - Stick figure on top of UK1 (overlap default)
+echo   - Legs stay in rest pose if camera can't see them
+echo   - UK1 size in [stickfig] log stays close to (1.62,1.75,0.34)
 echo ===============================================================
 echo.
 pause

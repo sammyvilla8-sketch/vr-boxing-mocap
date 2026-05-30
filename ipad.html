@@ -831,6 +831,17 @@ const KALIDO_TO_CC5 = {
   RightFoot:     ["CC_Base_R_Foot"],
 };
 const DRIVEN_BONES = Object.keys(KALIDO_TO_CC5);
+// Required MediaPipe pose-landmark indices per logical bone. If max visibility
+// across these indices is < 0.5, the bone is held at rest pose instead of being
+// driven by Kalidokit. Prevents desk-webcam noodle-leg through the floor.
+const BONE_LANDMARK_VIS_REQS = {
+  LeftUpperLeg:  [23, 25],
+  LeftLowerLeg:  [25, 27],
+  LeftFoot:      [27, 31],
+  RightUpperLeg: [24, 26],
+  RightLowerLeg: [26, 28],
+  RightFoot:     [28, 32],
+};
 
 const DEFAULT_BONE_CORRECTIONS = {
   Hips:{x:0,y:0,z:0}, Spine:{x:0,y:0,z:0}, Chest:{x:0,y:0,z:0},
@@ -1382,6 +1393,11 @@ function onModelLoaded(gltf){
   APP.charRoot = root;
   APP.scene.add(root);
 
+  // Cache REST bbox (post-fit, T-pose) so stick figure overlay uses a stable
+  // reference even when bones contort the mesh wildly.
+  APP.charRestBox = (finalBox && !finalBox.isEmpty())
+    ? finalBox.clone()
+    : new THREE.Box3(new THREE.Vector3(-0.5, 0, -0.5), new THREE.Vector3(0.5, 1.75, 0.5));
   enumerateBones(root);
   buildSkeletonHelper(root);
   APP.charMixer = new THREE.AnimationMixer(root);
@@ -1732,14 +1748,18 @@ function onHolisticResults(res){
   // 2D->pseudo-world fallback for MediaPipe versions that don't emit poseWorldLandmarks
   if (res.poseLandmarks && !res.poseWorldLandmarks){
     const H = 1.75;
+    const lh = res.poseLandmarks[23], rh = res.poseLandmarks[24];
+    const hipX = (lh && rh) ? (lh.x + rh.x) * 0.5 : 0.5;
+    const hipY = (lh && rh) ? (lh.y + rh.y) * 0.5 : 0.6;
+    const hipZ = (lh && rh) ? ((lh.z||0) + (rh.z||0)) * 0.5 : 0;
     res.poseWorldLandmarks = res.poseLandmarks.map(lm => ({
-      x: (lm.x - 0.5) * H,
-      y: (lm.y - 0.5) * H,
-      z: (lm.z || 0) * H,
+      x: (lm.x - hipX) * H,
+      y: -(lm.y - hipY) * H,
+      z: ((lm.z||0) - hipZ) * H,
       visibility: lm.visibility,
     }));
     if (!APP._warnedNoWorldLm){
-      console.warn("[mocap] MediaPipe not emitting poseWorldLandmarks; using 2D-derived fallback.");
+      console.warn("[mocap] MediaPipe not emitting poseWorldLandmarks; using 2D-derived fallback (hip-centered, Y-up).");
       APP._warnedNoWorldLm = true;
     }
   }
@@ -1870,6 +1890,22 @@ function driveCharacterFromPose(pose){
   for (const logical of DRIVEN_BONES){
     const bone = APP.charBones[logical];
     if (!bone) continue;
+    // Skip lower-body bones if MediaPipe can't see the corresponding landmarks
+    if (BONE_LANDMARK_VIS_REQS && BONE_LANDMARK_VIS_REQS[logical]) {
+      const lms = (APP.lastResults && APP.lastResults.poseLandmarks) || null;
+      if (lms) {
+        let maxVis = 0;
+        for (const idx of BONE_LANDMARK_VIS_REQS[logical]) {
+          const v = (lms[idx] && lms[idx].visibility) || 0;
+          if (v > maxVis) maxVis = v;
+        }
+        if (maxVis < 0.5) {
+          const restQ_skip = APP.charBoneRestQuats[logical];
+          if (restQ_skip) bone.quaternion.copy(restQ_skip);
+          continue;
+        }
+      }
+    }
     const rot = pose[logical];
     if (!rot) continue;
 
@@ -2231,9 +2267,15 @@ function syncStickFigureToCharacter(){
   if (!charRoot) return;
 
   let uk1Box = null;
-  try { uk1Box = measureSkinnedCharacterBounds(charRoot); } catch (e) { uk1Box = null; }
-  if (!uk1Box || uk1Box.isEmpty()){
-    try { uk1Box = new THREE.Box3().setFromObject(charRoot, true); } catch (e) { uk1Box = null; }
+  if (APP.charRestBox && !APP.charRestBox.isEmpty()){
+    uk1Box = APP.charRestBox.clone();
+    if (charRoot) uk1Box.translate(charRoot.position);
+  }
+  if (!uk1Box){
+    try { uk1Box = measureSkinnedCharacterBounds(charRoot); } catch (e) { uk1Box = null; }
+    if (!uk1Box || uk1Box.isEmpty()){
+      try { uk1Box = new THREE.Box3().setFromObject(charRoot, true); } catch (e) { uk1Box = null; }
+    }
   }
   if (!uk1Box || uk1Box.isEmpty()){
     console.warn("[stickfig] no UK1 bbox available; skipping sync");
