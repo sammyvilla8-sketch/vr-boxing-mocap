@@ -950,6 +950,14 @@ function onResize(){
   APP.renderer.setSize(w,h,false);
   APP.camera.aspect=w/h;
   APP.camera.updateProjectionMatrix();
+
+  // Re-frame the character whenever the panel changes size (orientation
+  // change, "Big 3D" toggle, "Split" toggle, browser window resize) so the
+  // full body stays visible. Preserve the user's current orbit direction —
+  // only the distance is adjusted to fit the new aspect ratio.
+  if (APP.charRoot && typeof frameCameraToObject === "function") {
+    frameCameraToObject(APP.camera, APP.charRoot, 1.15, { preserveDirection: true });
+  }
 }
 function animate(){
   requestAnimationFrame(animate);
@@ -1197,43 +1205,137 @@ function getCharacterBounds(root) {
   return box;
 }
 
-/* Frame the OrbitControls camera so the character is fully visible.
-   Sets target to character center and pulls the camera back along the
-   current view direction by a distance derived from FOV + character height.
-   Clamps minDistance / maxDistance so the user can rotate freely without
-   accidentally zooming into the foot or out into oblivion. */
-function frameCharacter() {
-  if (!APP.charRoot || !APP.camera || !APP.controls) return;
-  const box = getCharacterBounds(APP.charRoot);
-  const sz = box.getSize(new THREE.Vector3());
+/* Measure the TRUE rendered bounds of a SkinnedMesh character by walking its
+   skinned vertices through the skinning matrix manually. Ported from
+   index.html. For a CC5/Reallusion rig with a baked-in Armature scale, this
+   is the only path that yields actually-rendered bounds (Box3.setFromObject
+   and bone.getWorldPosition both lie). */
+function measureSkinnedCharacterBounds(root, sampleStep) {
+  sampleStep = sampleStep || 25;
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  let sampled = 0;
+  let skinnedMeshes = 0;
+  const tmp  = new THREE.Vector3();
+  const tmp2 = new THREE.Vector3();
+  const mat  = new THREE.Matrix4();
+  root.traverse(o => {
+    if (!o.isSkinnedMesh) return;
+    skinnedMeshes++;
+    const pos = o.geometry.attributes.position;
+    const skin = o.geometry.attributes.skinIndex;
+    const wgt  = o.geometry.attributes.skinWeight;
+    const skel = o.skeleton;
+    if (!pos || !skin || !wgt || !skel) return;
+    const inds = [0,0,0,0], ws = [0,0,0,0];
+    for (let i = 0; i < pos.count; i += sampleStep) {
+      tmp.fromBufferAttribute(pos, i);
+      inds[0] = skin.getX(i); inds[1] = skin.getY(i); inds[2] = skin.getZ(i); inds[3] = skin.getW(i);
+      ws[0]   = wgt.getX(i);  ws[1]   = wgt.getY(i);  ws[2]   = wgt.getZ(i);  ws[3]   = wgt.getW(i);
+      tmp2.set(0, 0, 0);
+      let totalW = 0;
+      for (let k = 0; k < 4; k++) {
+        const w = ws[k];
+        if (w === 0) continue;
+        const b = skel.bones[inds[k]];
+        if (!b) continue;
+        mat.multiplyMatrices(b.matrixWorld, skel.boneInverses[inds[k]]);
+        const v = tmp.clone().applyMatrix4(mat).multiplyScalar(w);
+        tmp2.add(v);
+        totalW += w;
+      }
+      if (totalW > 0.01) {
+        box.expandByPoint(tmp2);
+        sampled++;
+      }
+    }
+  });
+  if (sampled === 0) return null;
+  return box;
+}
+window.measureSkinnedCharacterBounds = measureSkinnedCharacterBounds;
+
+/* Aspect-ratio-aware camera framing — fits the character so its full
+   bounding box is visible in BOTH the vertical and horizontal FOV of the
+   current panel. Standard formula: compute the distance required to fit
+   the object's vertical extent under the vertical FOV, and the distance
+   required to fit the horizontal extent under the horizontal FOV (derived
+   from vFOV + aspect), then use the LARGER of the two so neither axis
+   clips. Padding (default 15 %) leaves a small headroom border. */
+function frameCameraToObject(camera, object, padding, options) {
+  if (!camera || !object) return;
+  padding = padding || 1.15;
+  options = options || {};
+
+  // Prefer the accurate skinned-vertex bounds; fall back to mesh bounds.
+  let box = null;
+  try { box = measureSkinnedCharacterBounds(object); } catch (e) { box = null; }
+  if (!box || box.isEmpty()) {
+    try { box = getCharacterBounds(object); } catch (e) { /* ignore */ }
+  }
+  if (!box || box.isEmpty()) {
+    console.warn("[camera] frameCameraToObject: empty bounds, skipping");
+    return;
+  }
+
+  const size   = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
-  const height = Math.max(sz.y, 0.001);
-  const radius = Math.max(sz.x, sz.y, sz.z, 0.001) * 0.5;
 
-  // distance that frames the character vertically with ~40% headroom
-  const fov = APP.camera.fov * Math.PI / 180;
-  const aspect = APP.camera.aspect || 1;
-  const distV = (height * 0.6) / Math.tan(fov / 2);
-  const distH = (sz.x * 0.6) / (Math.tan(fov / 2) * aspect);
-  const distance = Math.max(distV, distH) * 1.1;
+  // Guard against degenerate / NaN sizes
+  if (!isFinite(size.x) || !isFinite(size.y) || size.y < 1e-4) {
+    console.warn("[camera] frameCameraToObject: bad size", size);
+    return;
+  }
 
-  // Preserve roughly the current view direction so a manual orbit isn't reset
-  const view = new THREE.Vector3();
-  APP.camera.getWorldDirection(view);
-  view.multiplyScalar(-1).normalize();
-  if (view.lengthSq() < 0.01) view.set(0.6, 0.25, 0.85).normalize();
+  const aspect = camera.aspect || 1;
+  const vFOV   = camera.fov * Math.PI / 180;
+  const hFOV   = 2 * Math.atan(Math.tan(vFOV / 2) * aspect);
 
-  APP.controls.target.copy(center);
-  APP.camera.position.copy(center).addScaledVector(view, distance);
+  // distV: distance such that the character's full HEIGHT fits the vertical FOV
+  // distH: distance such that the character's full WIDTH  fits the horizontal FOV
+  const distV = (size.y / 2) / Math.tan(vFOV / 2);
+  const distH = (size.x / 2) / Math.tan(hFOV / 2);
+  const distance = Math.max(distV, distH) * padding;
 
-  // Allow rotate + zoom but bound it so user can't lose the character
-  APP.controls.minDistance = Math.max(0.05, radius * 0.4);
-  APP.controls.maxDistance = Math.max(2,   radius * 20);
-  APP.camera.near = Math.max(0.01, height * 0.005);
-  APP.camera.far  = Math.max(50,   height * 500);
-  APP.camera.updateProjectionMatrix();
-  APP.controls.update();
-  console.log(`[frame] bounds size=(${sz.x.toFixed(2)}, ${sz.y.toFixed(2)}, ${sz.z.toFixed(2)})m, center=(${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}), cam@${distance.toFixed(2)}m, target=${APP.controls.target.toArray().map(v=>v.toFixed(2))}`);
+  // Direction: head-on by default (positive Z = front of CC5 character). When
+  // preserveDirection is set (used on window resize so the user's current
+  // orbit isn't blown away every time the window changes size), reuse the
+  // existing camera direction relative to the controls' target.
+  let dir = new THREE.Vector3(0, 0, 1);
+  if (options.preserveDirection && APP.controls) {
+    dir.subVectors(camera.position, APP.controls.target);
+    if (dir.lengthSq() < 1e-4) dir.set(0, 0, 1); else dir.normalize();
+  }
+
+  camera.position.copy(center).addScaledVector(dir, distance);
+  camera.lookAt(center);
+
+  // Near / far need to be wide enough for the new distance + character.
+  camera.near = Math.max(0.01, size.y * 0.005);
+  camera.far  = Math.max(50,   distance * 100);
+  camera.updateProjectionMatrix();
+
+  // Keep OrbitControls in sync.
+  if (APP.controls) {
+    APP.controls.target.copy(center);
+    const radius = Math.max(size.x, size.y, size.z) * 0.5;
+    APP.controls.minDistance = Math.max(0.05, radius * 0.4);
+    APP.controls.maxDistance = Math.max(2,   radius * 20);
+    APP.controls.update();
+  }
+
+  console.log("[camera] framed at distance", distance.toFixed(2),
+              "for size", `(${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)})`,
+              "aspect", aspect.toFixed(2),
+              options.preserveDirection ? "(preserveDirection)" : "(head-on)");
+}
+window.frameCameraToObject = frameCameraToObject;
+
+/* Back-compat wrapper. Frame button + initial model load call this; it
+   resets to a clean head-on view fitted to the panel. */
+function frameCharacter() {
+  if (!APP.charRoot || !APP.camera) return;
+  frameCameraToObject(APP.camera, APP.charRoot, 1.15);
 }
 window.frameCharacter = frameCharacter;
 
