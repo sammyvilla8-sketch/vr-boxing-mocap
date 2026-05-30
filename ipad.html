@@ -1753,16 +1753,38 @@ function onHolisticResults(res){
     if (elapsed >= 3.0) finalizeCalibration();
   }
 
+  // Update diagnostic stick figure FIRST (raw landmarks, no Kalidokit dep).
+  // Keeps the cyan figure moving even if KalidoKit fails for some reason.
+  try { updateStickFigure(res.poseWorldLandmarks); }
+  catch (e){ console.warn("[stickfig] update fail:", e); }
+
   let pose;
   try {
     pose = Kalidokit.Pose.solve(res.poseWorldLandmarks, res.poseLandmarks, {
       runtime: "mediapipe", video: sourceVideo, enableLegs: true,
     });
-  } catch (e){ console.warn("[kalido] solve fail:", e); return; }
-  if (!pose) return;
+  } catch (e){ console.warn("[kalido] solve fail:", e); pose = null; }
+  if (pose){
+    try { driveCharacterFromPose(pose); }
+    catch (e){ console.warn("[char] drive fail:", e); }
+  }
 
-  driveCharacterFromPose(pose);
-  updateStickFigure(res.poseWorldLandmarks);
+  // Throttled live-pipeline diagnostic (~once/2s @ 30fps).
+  APP._mocapDiagCount = (APP._mocapDiagCount || 0) + 1;
+  if (APP._mocapDiagCount % 60 === 0){
+    const ua = (APP.charBones && APP.charBones.LeftUpperArm)
+      ? APP.charBones.LeftUpperArm.quaternion : null;
+    const uaStr = ua ? ua.x.toFixed(3)+","+ua.y.toFixed(3)+","+ua.z.toFixed(3)+","+ua.w.toFixed(3) : "n/a";
+    const stickJointCount = (typeof STICK !== "undefined" && STICK.joints)
+      ? STICK.joints.filter(j => j.visible).length : 0;
+    console.log("[mocap-diag]",
+      "frame", APP._mocapDiagCount,
+      "haveBody", !!(res.poseLandmarks && res.poseWorldLandmarks),
+      "kalido", !!pose,
+      "LeftUpperArm.quat", uaStr,
+      "stickVisibleJoints", stickJointCount + "/33",
+      "calibrated", !!(APP.calibrationBaseline && APP.calibrationBaseline.kalidoKitPose));
+  }
 
   if (APP.recording) recordFrame();
 }

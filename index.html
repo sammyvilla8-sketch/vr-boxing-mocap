@@ -1575,7 +1575,14 @@ function onHolisticResults(res) {
     if (elapsed >= 3.0) finalizeCalibration();
   }
 
-  // Drive character
+  // Update diagnostic stick figure FIRST (raw landmarks, no Kalidokit dep).
+  // This way the cyan stick figure keeps moving even if Kalidokit.Pose.solve
+  // throws or returns null — useful for diagnosing upstream failures without
+  // losing all visible motion feedback.
+  try { updateStickFigure(res.poseWorldLandmarks); }
+  catch (e) { console.warn("[stickfig] update fail:", e); }
+
+  // Drive character (KalidoKit -> CC5 bones)
   let pose;
   try {
     pose = Kalidokit.Pose.solve(res.poseWorldLandmarks, res.poseLandmarks, {
@@ -1585,13 +1592,30 @@ function onHolisticResults(res) {
     });
   } catch (e) {
     console.warn("[kalido] solve fail:", e);
-    return;
+    pose = null;
   }
-  if (!pose) return;
-  driveCharacterFromPose(pose);
+  if (pose) {
+    try { driveCharacterFromPose(pose); }
+    catch (e) { console.warn("[char] drive fail:", e); }
+  }
 
-  // Update diagnostic stick figure (raw MediaPipe landmarks)
-  updateStickFigure(res.poseWorldLandmarks);
+  // Throttled live-pipeline diagnostic (~once per 2s @ 30fps). Logs whether
+  // each stage fired so the user can paste this when motion goes missing.
+  APP._mocapDiagCount = (APP._mocapDiagCount || 0) + 1;
+  if (APP._mocapDiagCount % 60 === 0) {
+    const ua = (APP.charBones && APP.charBones.LeftUpperArm)
+      ? APP.charBones.LeftUpperArm.quaternion : null;
+    const uaStr = ua ? ua.x.toFixed(3)+","+ua.y.toFixed(3)+","+ua.z.toFixed(3)+","+ua.w.toFixed(3) : "n/a";
+    const stickJointCount = (typeof STICK !== "undefined" && STICK.joints)
+      ? STICK.joints.filter(j => j.visible).length : 0;
+    console.log("[mocap-diag]",
+      "frame", APP._mocapDiagCount,
+      "haveBody", !!(res.poseLandmarks && res.poseWorldLandmarks),
+      "kalido", !!pose,
+      "LeftUpperArm.quat", uaStr,
+      "stickVisibleJoints", stickJointCount + "/33",
+      "calibrated", !!(APP.calibrationBaseline && APP.calibrationBaseline.kalidoKitPose));
+  }
 
   // Record
   if (APP.recording) recordFrame();
