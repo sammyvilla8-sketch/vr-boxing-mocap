@@ -1391,7 +1391,14 @@ function onModelLoaded(gltf){
 
   // Frame the camera so the whole character is visible.
   // Defer to next animation frame so all matrices are settled.
-  requestAnimationFrame(() => requestAnimationFrame(frameCharacter));
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    frameCharacter();
+    // Sync the cyan stick-figure overlay (scale + position) to the
+    // now-rendered UK1 size.
+    if (typeof syncStickFigureToCharacter === "function") {
+      syncStickFigureToCharacter();
+    }
+  }));
 }
 
 function enumerateBones(root){
@@ -2157,6 +2164,7 @@ function initStickFigure(){
 }
 function applyStickFigureMode(){
   const visible = STICK.mode !== 3;
+  STICK.group.visible = visible;
   STICK.lineSeg.visible = visible;
   for (const j of STICK.joints) j.visible = visible && j._hasData;
   if (STICK.mode === 2){
@@ -2166,6 +2174,57 @@ function applyStickFigureMode(){
     STICK.jointMat.opacity = 1.0;
     STICK.lineMat.opacity  = 1.0;
   }
+
+  // Re-sync scale + position to UK1 (offsetX differs per mode).
+  syncStickFigureToCharacter();
+}
+
+/* Sync the cyan MediaPipe stick-figure overlay to UK1's RENDERED bbox.
+   See index.html for the long-form explanation of the CC5 scale issue.
+   Short version: bone.getWorldPosition() and Box3.setFromObject lie for the
+   CC5 rig; only measureSkinnedCharacterBounds() gives the true rendered size.
+   We use that to set STICK.group.scale + position, then write pelvis-local
+   MediaPipe-meter coords for each joint inside STICK.group. */
+const STICK_MEDIAPIPE_BASELINE_HEIGHT = 1.75;
+const STICK_PELVIS_HEIGHT_RATIO = 0.55;
+
+function syncStickFigureToCharacter(){
+  if (!STICK.group) return;
+  const charRoot = APP.charRoot;
+  if (!charRoot) return;
+
+  let uk1Box = null;
+  try { uk1Box = measureSkinnedCharacterBounds(charRoot); } catch (e) { uk1Box = null; }
+  if (!uk1Box || uk1Box.isEmpty()){
+    try { uk1Box = new THREE.Box3().setFromObject(charRoot, true); } catch (e) { uk1Box = null; }
+  }
+  if (!uk1Box || uk1Box.isEmpty()){
+    console.warn("[stickfig] no UK1 bbox available; skipping sync");
+    return;
+  }
+  const uk1Size = uk1Box.getSize(new THREE.Vector3());
+  const uk1Center = uk1Box.getCenter(new THREE.Vector3());
+  const scale = (uk1Size.y > 1e-4)
+    ? uk1Size.y / STICK_MEDIAPIPE_BASELINE_HEIGHT
+    : 1;
+  STICK._scale = scale;
+  STICK._uk1Box = uk1Box;
+  STICK._uk1Size = uk1Size;
+  STICK._uk1Center = uk1Center;
+  STICK.group.scale.setScalar(scale);
+
+  const pelvisWorldY = uk1Box.min.y + uk1Size.y * STICK_PELVIS_HEIGHT_RATIO;
+  let offsetX = 0;
+  if (STICK.mode === 1){
+    offsetX = -Math.max(1.5 * scale, uk1Size.x * 1.5);
+  }
+  STICK.group.position.set(uk1Center.x + offsetX, pelvisWorldY, uk1Center.z);
+
+  console.log("[stickfig] synced to UK1: scale", scale.toFixed(4),
+    "pos (" + STICK.group.position.toArray().map(v => v.toFixed(2)).join(",") + ")",
+    "uk1Size (" + uk1Size.toArray().map(v => v.toFixed(2)).join(",") + ")",
+    "uk1Box.min.y", uk1Box.min.y.toFixed(2),
+    "mode", STICK.mode);
 }
 function updateStickFigure(poseWorldLandmarks){
   if (!STICK.group) return;
@@ -2175,7 +2234,11 @@ function updateStickFigure(poseWorldLandmarks){
     STICK.lineSeg.visible = false;
     return;
   }
-  const offsetX = (STICK.mode === 1) ? -1.5 : 0;
+
+  // Cheap periodic re-sync to track any character rescaling.
+  STICK._frameCounter = (STICK._frameCounter || 0) + 1;
+  if (STICK._frameCounter % 60 === 0) syncStickFigureToCharacter();
+
   const lh = poseWorldLandmarks[23], rh = poseWorldLandmarks[24];
   let pelvisX = 0, pelvisY = 0, pelvisZ = 0;
   if (lh && rh){
@@ -2183,16 +2246,14 @@ function updateStickFigure(poseWorldLandmarks){
     pelvisY = (lh.y + rh.y) * 0.5;
     pelvisZ = (lh.z + rh.z) * 0.5;
   }
-  if (APP.charBones.Hips){
-    APP.charBones.Hips.getWorldPosition(STICK.characterHipWorld);
-  } else {
-    STICK.characterHipWorld.set(0, 1.0, 0);
-  }
-  function lmToWorld(lm){
+  // Local coords inside STICK.group: pelvis at origin, Y up, in MediaPipe
+  // meters. STICK.group.scale + STICK.group.position (set by
+  // syncStickFigureToCharacter) convert these into UK1's rendered world frame.
+  function lmToLocal(lm){
     return [
-      (lm.x - pelvisX) + STICK.characterHipWorld.x + offsetX,
-      -(lm.y - pelvisY) + STICK.characterHipWorld.y,
-      (lm.z - pelvisZ) + STICK.characterHipWorld.z,
+      (lm.x - pelvisX),
+      -(lm.y - pelvisY),
+      (lm.z - pelvisZ),
     ];
   }
   for (let i = 0; i < 33; i++){
@@ -2201,7 +2262,7 @@ function updateStickFigure(poseWorldLandmarks){
     if (!lm || (lm.visibility !== undefined && lm.visibility < 0.3)){
       j.visible = false; j._hasData = false; continue;
     }
-    const w = lmToWorld(lm);
+    const w = lmToLocal(lm);
     j.position.set(w[0], w[1], w[2]);
     j._hasData = true; j.visible = true;
   }
@@ -2211,7 +2272,7 @@ function updateStickFigure(poseWorldLandmarks){
     const la = poseWorldLandmarks[a], lb = poseWorldLandmarks[b];
     const base = i * 6;
     if (la && lb){
-      const wa = lmToWorld(la), wb = lmToWorld(lb);
+      const wa = lmToLocal(la), wb = lmToLocal(lb);
       pos[base+0]=wa[0]; pos[base+1]=wa[1]; pos[base+2]=wa[2];
       pos[base+3]=wb[0]; pos[base+4]=wb[1]; pos[base+5]=wb[2];
     } else {

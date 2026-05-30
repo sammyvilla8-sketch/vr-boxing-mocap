@@ -1092,7 +1092,14 @@ function onModelLoaded(gltf, slot) {
 
     // 5. Frame the camera on the character so it fits the view.
     //    Defer to next animation frame so all matrices are settled.
-    requestAnimationFrame(() => requestAnimationFrame(frameCharacter));
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      frameCharacter();
+      // Now that UK1 is at its final rendered size, sync the cyan stick
+      // figure overlay (scale + position) to match.
+      if (typeof syncStickFigureToCharacter === "function") {
+        syncStickFigureToCharacter();
+      }
+    }));
   } else {
     if (APP.reference) APP.scene.remove(APP.reference);
     APP.reference = root;
@@ -2487,10 +2494,13 @@ function initStickFigure() {
   STICK.targetLabel.visible = false;
   APP.scene.add(STICK.targetLabel);  // anchored to character, not stick group
 
-  // Arrow group for per-bone diagnostic arrows
+  // Arrow group for per-bone diagnostic arrows.
+  // Parented to STICK.group so arrow positions/lengths inherit the
+  // group's scale + translation (computed by syncStickFigureToCharacter
+  // from UK1's actual rendered bbox; see comment on that function).
   STICK.arrowGroup = new THREE.Group();
   STICK.arrowGroup.name = "MP_BoneArrows";
-  APP.scene.add(STICK.arrowGroup);
+  STICK.group.add(STICK.arrowGroup);
   // Pre-create arrows for each driven bone
   for (const [logical /*, hi, ti*/] of BONE_DIRECTION_LANDMARKS) {
     const mpArrow = new THREE.ArrowHelper(
@@ -2512,6 +2522,7 @@ function initStickFigure() {
 
 function applyStickFigureMode() {
   const visible = STICK.mode !== 3;
+  STICK.group.visible = visible;
   STICK.lineSeg.visible = visible;
   for (const j of STICK.joints) j.visible = visible && j._hasData;
   STICK.sourceLabel.visible = visible;
@@ -2532,6 +2543,78 @@ function applyStickFigureMode() {
     STICK.jointMat.opacity = 1.0;
     STICK.lineMat.opacity = 1.0;
   }
+
+  // Mode-change → re-sync scale + position to UK1 (offsetX differs per mode).
+  syncStickFigureToCharacter();
+}
+
+/* Sync the cyan MediaPipe stick-figure overlay to UK1's RENDERED size + position.
+
+   The CC5 rig has a baked-in Armature scale issue where:
+     * Box3.setFromObject under-reports the rendered bbox
+     * bone.getWorldPosition() returns tiny "raw" coords in CC5 internal scale
+   The only reliable measurement is measureSkinnedCharacterBounds(), which
+   walks skinned vertices through the skinning matrix to get TRUE bounds.
+
+   We measure UK1's true bbox, set STICK.group.scale = uk1Height / 1.75
+   (MediaPipe baseline ≈ 1.75m), then position STICK.group at UK1's pelvis
+   (mode 2 = overlap) or offset to its left (mode 1 = side-by-side). Joints,
+   lines, labels, and arrows all live as children of STICK.group in
+   pelvis-relative MediaPipe-meter LOCAL coords — the group's transform
+   handles the rest. */
+const STICK_MEDIAPIPE_BASELINE_HEIGHT = 1.75;
+const STICK_PELVIS_HEIGHT_RATIO = 0.55; // pelvis ≈ 55% up from feet (typical human)
+
+function syncStickFigureToCharacter() {
+  if (!STICK.group) return;
+  const charRoot = APP.charRoot;
+  if (!charRoot) return;
+
+  let uk1Box = null;
+  try { uk1Box = measureSkinnedCharacterBounds(charRoot); } catch (e) { uk1Box = null; }
+  if (!uk1Box || uk1Box.isEmpty()) {
+    try { uk1Box = new THREE.Box3().setFromObject(charRoot, true); } catch (e) { uk1Box = null; }
+  }
+  if (!uk1Box || uk1Box.isEmpty()) {
+    console.warn("[stickfig] no UK1 bbox available; skipping sync");
+    return;
+  }
+  const uk1Size = uk1Box.getSize(new THREE.Vector3());
+  const uk1Center = uk1Box.getCenter(new THREE.Vector3());
+
+  const scale = (uk1Size.y > 1e-4)
+    ? uk1Size.y / STICK_MEDIAPIPE_BASELINE_HEIGHT
+    : 1;
+  STICK._scale = scale;
+  STICK._uk1Box = uk1Box;
+  STICK._uk1Size = uk1Size;
+  STICK._uk1Center = uk1Center;
+  STICK.group.scale.setScalar(scale);
+
+  // In stick-local coords: pelvis at y=0, feet at ~y=-0.96m, head at ~y=+0.7m.
+  // Position group so the pelvis sits ~55% up UK1's rendered height (which
+  // puts the stick figure's feet near uk1Box.min.y and head near max.y).
+  const pelvisWorldY = uk1Box.min.y + uk1Size.y * STICK_PELVIS_HEIGHT_RATIO;
+
+  let offsetX = 0;
+  if (STICK.mode === 1) {
+    // Side-by-side: offset to UK1's left. ~1.5m-equivalent in scaled units,
+    // never less than 1.5x UK1 width so the rigs don't visually touch.
+    offsetX = -Math.max(1.5 * scale, uk1Size.x * 1.5);
+  }
+
+  STICK.group.position.set(uk1Center.x + offsetX, pelvisWorldY, uk1Center.z);
+
+  // Compensate source-label scale so it doesn't grow with the group.
+  if (STICK.sourceLabel && scale > 1e-4) {
+    STICK.sourceLabel.scale.set(0.8 / scale, 0.2 / scale, 1);
+  }
+
+  console.log("[stickfig] synced to UK1: scale", scale.toFixed(4),
+    "pos (" + STICK.group.position.toArray().map(v => v.toFixed(2)).join(",") + ")",
+    "uk1Size (" + uk1Size.toArray().map(v => v.toFixed(2)).join(",") + ")",
+    "uk1Box.min.y", uk1Box.min.y.toFixed(2),
+    "mode", STICK.mode);
 }
 
 function updateStickFigure(poseWorldLandmarks) {
@@ -2547,12 +2630,12 @@ function updateStickFigure(poseWorldLandmarks) {
   }
   STICK.lastPose3D = poseWorldLandmarks;
 
-  // MediaPipe coord convention: x rightward, y downward, z towards camera (in meters).
-  // Three.js convention: x right, y up, z out of screen.
-  // So we negate Y (flip), and apply a side-by-side offset when mode=1.
-  const offsetX = (STICK.mode === 1) ? -1.5 : 0;
+  // Cheap periodic re-sync to track any character rescaling.
+  STICK._frameCounter = (STICK._frameCounter || 0) + 1;
+  if (STICK._frameCounter % 60 === 0) syncStickFigureToCharacter();
 
-  // Anchor the stick-figure pelvis at character hip world position
+  // MediaPipe coord convention: x rightward, y downward, z towards camera (meters).
+  // Three.js convention: x right, y up, z out of screen → negate Y.
   // pelvis ≈ midpoint of landmarks 23 (left hip) and 24 (right hip)
   const lh = poseWorldLandmarks[23], rh = poseWorldLandmarks[24];
   let pelvisX = 0, pelvisY = 0, pelvisZ = 0;
@@ -2562,19 +2645,14 @@ function updateStickFigure(poseWorldLandmarks) {
     pelvisZ = (lh.z + rh.z) * 0.5;
   }
 
-  // Character hip world position (for anchor)
-  if (APP.charBones.Hips) {
-    APP.charBones.Hips.getWorldPosition(STICK.characterHipWorld);
-  } else {
-    STICK.characterHipWorld.set(0, 1.0, 0);
-  }
-
-  function lmToWorld(lm) {
-    // Flip MediaPipe Y, translate so pelvis aligns to character hip
+  // Local coords inside STICK.group: pelvis at origin, Y up, in MediaPipe
+  // meters. STICK.group.scale and STICK.group.position (set by
+  // syncStickFigureToCharacter) handle conversion to UK1's rendered frame.
+  function lmToLocal(lm) {
     return [
-      (lm.x - pelvisX) + STICK.characterHipWorld.x + offsetX,
-      -(lm.y - pelvisY) + STICK.characterHipWorld.y,
-      (lm.z - pelvisZ) + STICK.characterHipWorld.z,
+      (lm.x - pelvisX),
+      -(lm.y - pelvisY),
+      (lm.z - pelvisZ),
     ];
   }
 
@@ -2586,7 +2664,7 @@ function updateStickFigure(poseWorldLandmarks) {
       j.visible = false; j._hasData = false;
       continue;
     }
-    const w = lmToWorld(lm);
+    const w = lmToLocal(lm);
     j.position.set(w[0], w[1], w[2]);
     j._hasData = true;
     j.visible = true;
@@ -2599,7 +2677,7 @@ function updateStickFigure(poseWorldLandmarks) {
     const la = poseWorldLandmarks[a], lb = poseWorldLandmarks[b];
     const base = i * 6;
     if (la && lb) {
-      const wa = lmToWorld(la), wb = lmToWorld(lb);
+      const wa = lmToLocal(la), wb = lmToLocal(lb);
       pos[base+0] = wa[0]; pos[base+1] = wa[1]; pos[base+2] = wa[2];
       pos[base+3] = wb[0]; pos[base+4] = wb[1]; pos[base+5] = wb[2];
     } else {
@@ -2610,30 +2688,37 @@ function updateStickFigure(poseWorldLandmarks) {
   STICK.lineGeom.attributes.position.needsUpdate = true;
   STICK.lineSeg.visible = true;
 
-  // Position labels: source above pelvis area of stick figure (top of head ~ landmark 0)
+  // Source label above stick figure head — child of STICK.group, so written
+  // in local (pelvis-relative MP-meter) coords.
   const head = poseWorldLandmarks[0];
   if (head) {
-    const hw = lmToWorld(head);
+    const hw = lmToLocal(head);
     STICK.sourceLabel.position.set(hw[0], hw[1] + 0.25, hw[2]);
   }
-  // Target label above character head
-  if (APP.charBones.Head) {
+  // Target label is in world space (added to APP.scene). Anchor it near the
+  // top of UK1's rendered bbox so it stays at a sensible height regardless
+  // of the CC5 bone-world-position scale issue.
+  if (STICK._uk1Box && !STICK._uk1Box.isEmpty()) {
+    const c = STICK._uk1Center;
+    STICK.targetLabel.position.set(c.x, STICK._uk1Box.max.y + 0.25, c.z);
+  } else if (APP.charBones.Head) {
     const hp = new THREE.Vector3();
     APP.charBones.Head.getWorldPosition(hp);
     STICK.targetLabel.position.set(hp.x, hp.y + 0.25, hp.z);
-  } else {
-    STICK.targetLabel.position.set(STICK.characterHipWorld.x, STICK.characterHipWorld.y + 0.9, STICK.characterHipWorld.z);
   }
 
-  // Per-bone arrows (only meaningful in mode 2)
+  // Per-bone direction arrows (overlap mode only). arrowGroup is parented to
+  // STICK.group, so positions/lengths/directions are in stick-local space and
+  // inherit the group's scale + translation.
   if (STICK.mode === 2) {
+    const groupWorldQuatInv = STICK.group.getWorldQuaternion(new THREE.Quaternion()).invert();
     for (const [logical, headIdx, tailIdx] of BONE_DIRECTION_LANDMARKS) {
       const hd = poseWorldLandmarks[headIdx], tl = poseWorldLandmarks[tailIdx];
       const pair = STICK.arrows[logical];
       if (!pair) continue;
       if (!hd || !tl) { pair.mpArrow.visible = false; pair.charArrow.visible = false; continue; }
-      // MP arrow: from head landmark, pointing at tail landmark
-      const hw = lmToWorld(hd), tw = lmToWorld(tl);
+      // MP arrow: from head landmark, pointing at tail landmark (local coords)
+      const hw = lmToLocal(hd), tw = lmToLocal(tl);
       const mpStart = new THREE.Vector3(hw[0], hw[1], hw[2]);
       const mpDir = new THREE.Vector3(tw[0]-hw[0], tw[1]-hw[1], tw[2]-hw[2]);
       const mpLen = Math.max(0.05, mpDir.length());
@@ -2643,14 +2728,17 @@ function updateStickFigure(poseWorldLandmarks) {
       pair.mpArrow.setLength(mpLen, mpLen * 0.3, mpLen * 0.2);
       pair.mpArrow.visible = true;
 
-      // Char arrow: from CC5 bone head, pointing along the bone's child axis
+      // Char arrow: starts at the MediaPipe landmark (co-located with mpArrow
+      // for visual side-by-side direction comparison), points along the
+      // actual CC5 bone direction. We can't trust bone.getWorldPosition()
+      // (CC5 baked scale issue), but bone.getWorldQuaternion() gives the
+      // correct ROTATION — convert that to stick-group local frame.
       const bone = APP.charBones[logical];
       if (bone) {
-        const bonePos = new THREE.Vector3();
-        bone.getWorldPosition(bonePos);
-        // Direction = bone's local Y axis transformed to world (CC5 bones typically point along +Y)
-        const dir = new THREE.Vector3(0,1,0).applyQuaternion(bone.getWorldQuaternion(new THREE.Quaternion()));
-        pair.charArrow.position.copy(bonePos);
+        const boneWorldQuat = bone.getWorldQuaternion(new THREE.Quaternion());
+        const localQuat = groupWorldQuatInv.clone().multiply(boneWorldQuat);
+        const dir = new THREE.Vector3(0, 1, 0).applyQuaternion(localQuat).normalize();
+        pair.charArrow.position.copy(mpStart);
         pair.charArrow.setDirection(dir);
         pair.charArrow.setLength(mpLen, mpLen * 0.3, mpLen * 0.2);
         pair.charArrow.visible = true;
