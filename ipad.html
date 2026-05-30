@@ -67,12 +67,35 @@
     #controls { border-left: 1px solid var(--border); border-top: none; }
   }
 
-  /* ============ 3D CENTER ============ */
+  /* ============ STAGE: split camera + 3D scene panels ============ */
+  /* Default (portrait / phone): camera on top (~30% height), 3D below (~70%) */
   #stage {
     position: relative;
     background: #050609;
     min-height: 0;
     overflow: hidden;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: 30% 70%;
+    gap: 0;
+  }
+  /* Landscape / iPad: side-by-side panels (camera ~30% wide, 3D ~70%) */
+  @media (orientation: landscape) {
+    #stage {
+      grid-template-columns: 30% 70%;
+      grid-template-rows: 1fr;
+    }
+  }
+  #cam-panel, #scene-panel {
+    position: relative;
+    background: #050609;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+  #cam-panel { border-right: 1px solid var(--border); }
+  @media (orientation: portrait) {
+    #cam-panel { border-right: none; border-bottom: 1px solid var(--border); }
   }
   canvas#three {
     width: 100%;
@@ -80,24 +103,20 @@
     display: block;
     touch-action: none; /* let OrbitControls handle gestures */
   }
-  /* small camera preview anchored top-left of stage */
+  /* Camera / video preview boxes fill the cam-panel */
   #cam-box, #vid-box {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    width: 36vw;
-    max-width: 220px;
-    aspect-ratio: 4/3;
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border: none;
+    border-radius: 0;
     background: #000;
     overflow: hidden;
     z-index: 10;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   }
   #cam-box video, #vid-box video,
   #cam-box canvas, #vid-box canvas {
-    width: 100%; height: 100%; object-fit: cover; display:block;
+    width: 100%; height: 100%; object-fit: contain; display:block;
   }
   #cam-box canvas, #vid-box canvas {
     position: absolute; top:0; left:0; pointer-events:none;
@@ -117,6 +136,85 @@
   @keyframes rec-pulse {
     0%,100% { box-shadow: 0 0 0 3px rgba(255,48,48,0.4), 0 4px 12px rgba(0,0,0,0.4); }
     50%     { box-shadow: 0 0 0 6px rgba(255,48,48,0.15), 0 4px 12px rgba(0,0,0,0.4); }
+  }
+
+  /* ============ "BIG 3D" mode: camera shrinks to corner thumbnail ============ */
+  #stage.big-3d {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 1fr !important;
+  }
+  #stage.big-3d #cam-panel {
+    position: absolute;
+    top: 8px; left: 8px;
+    width: 180px; height: 135px;
+    z-index: 20;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.55);
+    border: 1px solid var(--border);
+  }
+  #stage.big-3d #cam-box, #stage.big-3d #vid-box { border-radius: 8px; }
+  #stage.big-3d #scene-panel { grid-column: 1/-1; grid-row: 1/-1; }
+
+  /* ============ Big-3D toggle button (lives in scene-panel) ============ */
+  #scene-toolbar {
+    position: absolute;
+    top: 8px; right: 8px;
+    z-index: 15;
+    display: flex; gap: 6px;
+  }
+  #scene-toolbar button {
+    background: rgba(20,22,26,0.85);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    min-height: 36px;
+  }
+  #scene-toolbar button.active {
+    background: var(--accent); color: #0a0a0a; border-color: var(--accent);
+  }
+
+  /* ============ UK1 download progress (big and prominent for iPad) ============ */
+  #uk1-progress {
+    position: absolute;
+    left: 12px; right: 12px;
+    bottom: 12px;
+    background: rgba(15,18,22,0.96);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    z-index: 30;
+    display: none;
+    color: var(--fg);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  #uk1-progress.visible { display: block; }
+  #uk1-progress .title { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  #uk1-progress .label-row {
+    display: flex; justify-content: space-between;
+    font-size: 13px; color: var(--muted);
+  }
+  #uk1-progress .bar {
+    height: 12px;
+    background: #0e1115;
+    border-radius: 6px;
+    margin-top: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  #uk1-progress .bar .fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.15s ease-out;
+  }
+  #uk1-progress .sub {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
+    line-height: 1.4;
   }
 
   /* Big REC indicator overlay on top of stage */
@@ -429,25 +527,45 @@
 
   <div id="main">
 
-    <!-- 3D stage -->
+    <!-- 3D stage: split camera + scene panels -->
     <div id="stage">
-      <canvas id="three"></canvas>
 
-      <!-- camera preview (visible in live mode) -->
-      <div id="cam-box">
-        <span class="label">Camera</span>
-        <video id="cam-video" autoplay playsinline muted></video>
-        <canvas id="cam-overlay"></canvas>
+      <!-- LEFT/TOP: real-life camera + MediaPipe landmark dots -->
+      <div id="cam-panel">
+        <div id="cam-box">
+          <span class="label">Camera (real life)</span>
+          <video id="cam-video" autoplay playsinline muted></video>
+          <canvas id="cam-overlay"></canvas>
+        </div>
+        <div id="vid-box" style="display:none;">
+          <span class="label" id="vid-label">Video (real life)</span>
+          <video id="vid-file" playsinline muted></video>
+          <canvas id="vid-overlay"></canvas>
+        </div>
       </div>
 
-      <!-- video file preview (visible in video mode) -->
-      <div id="vid-box" style="display:none;">
-        <span class="label" id="vid-label">Video</span>
-        <video id="vid-file" playsinline muted></video>
-        <canvas id="vid-overlay"></canvas>
+      <!-- RIGHT/BOTTOM: clean 3D character + stick figure -->
+      <div id="scene-panel">
+        <canvas id="three"></canvas>
+
+        <div id="scene-toolbar">
+          <button id="btn-big3d" title="Shrink camera to corner thumbnail">Big 3D</button>
+        </div>
+
+        <div id="rec-badge"><span>REC</span></div>
+
+        <!-- UK1 download progress (prominent for first-time iPad download) -->
+        <div id="uk1-progress">
+          <div class="title" id="uk1-progress-title">Downloading UK1 character</div>
+          <div class="label-row">
+            <span id="uk1-progress-text">Starting…</span>
+            <span id="uk1-progress-pct">0%</span>
+          </div>
+          <div class="bar"><div class="fill" id="uk1-progress-fill"></div></div>
+          <div class="sub">First-time download from GitHub. Cached on this device — stays available offline.</div>
+        </div>
       </div>
 
-      <div id="rec-badge"><span>REC</span></div>
     </div>
 
     <!-- Bottom action bar: always visible, big touch targets -->
@@ -538,9 +656,12 @@
             <input type="file" id="file-model" accept=".glb,model/gltf-binary" />
           </label>
           <div class="btn-row" style="margin-top:8px;">
-            <button class="btn-big" id="btn-load-uk1">Load UK1 (≈478 MB) ⚠ WiFi only</button>
+            <button class="btn-big primary" id="btn-load-uk1">Load UK1 (auto-cached)</button>
           </div>
-          <div class="hint" id="model-info">No character loaded. Tap above to pick a GLB, or use stick figure only.</div>
+          <div class="btn-row" style="margin-top:6px;">
+            <button class="btn-big" id="btn-clear-uk1-cache">Clear UK1 cache</button>
+          </div>
+          <div class="hint" id="model-info">No character loaded. Tap "Load UK1" to fetch from GitHub (cached after first use).</div>
         </div>
       </div>
 
@@ -862,21 +983,140 @@ $("file-model").addEventListener("change", e => {
   }, undefined, err => { toast("Load failed: " + err.message, "error"); console.error(err); });
 });
 
-$("btn-load-uk1").addEventListener("click", () => {
-  if (!confirm("Load UK1 character? File is ~478 MB. Use WiFi.")) return;
-  // Try local first (works when you've placed the GLB next to ipad.html, e.g. desktop sync),
-  // then fall back to GitHub Release URL if user has set one up.
-  fetch("./uk1_outboxer.glb", { method: "HEAD" })
-    .then(res => {
-      if (res.ok) {
-        loadGLBFromUrl("./uk1_outboxer.glb", "UK1 (local)");
-      } else {
-        toast("UK1 not hosted with the app. Use file picker, or set up a GitHub Release.", "error");
-      }
-    })
-    .catch(() => {
-      toast("UK1 not hosted. Use file picker.", "error");
+/* =============================================================
+   UK1 CHARACTER: GitHub Release + IndexedDB cache (iPad version)
+   - On localhost / file:// prefers local ./uk1_outboxer.glb
+   - On Pages: downloads from release once, then serves from IndexedDB
+============================================================= */
+const UK1_URL       = "https://github.com/sammyvilla8-sketch/vr-boxing-mocap/releases/download/v1/uk1_outboxer.glb";
+const UK1_CACHE_KEY = "uk1_glb_v1";
+const UK1_CACHE_DB  = "vr_boxing_mocap_cache";
+const UK1_STORE     = "blobs";
+
+function openCacheDB(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(UK1_CACHE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(UK1_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function getCachedBlob(key){
+  try {
+    const db = await openCacheDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(UK1_STORE, "readonly");
+      const r = tx.objectStore(UK1_STORE).get(key);
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => reject(r.error);
     });
+  } catch(e){ console.warn("[uk1 cache] read failed:", e); return null; }
+}
+async function cacheBlob(key, blob){
+  try {
+    const db = await openCacheDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(UK1_STORE, "readwrite");
+      const r = tx.objectStore(UK1_STORE).put(blob, key);
+      r.onsuccess = () => resolve();
+      r.onerror = () => reject(r.error);
+    });
+    console.log("[uk1 cache] wrote", (blob.size/1024/1024).toFixed(1), "MB");
+  } catch(e){ console.warn("[uk1 cache] write failed:", e); }
+}
+async function clearUK1Cache(){
+  return new Promise(resolve => {
+    const r = indexedDB.deleteDatabase(UK1_CACHE_DB);
+    r.onsuccess = r.onerror = r.onblocked = () => resolve();
+  });
+}
+window.clearUK1Cache = clearUK1Cache;
+
+function showUK1Progress(text, pct){
+  const el = $("uk1-progress");
+  if (!el) return;
+  if (text === null){ el.classList.remove("visible"); return; }
+  el.classList.add("visible");
+  $("uk1-progress-text").textContent = text;
+  if (pct != null){
+    $("uk1-progress-pct").textContent = pct.toFixed(0) + "%";
+    $("uk1-progress-fill").style.width = pct + "%";
+  }
+}
+
+async function downloadWithProgress(url, onProgress){
+  const response = await fetch(url, { mode: "cors" });
+  if (!response.ok) throw new Error("HTTP " + response.status + " fetching UK1");
+  const total = +response.headers.get("Content-Length") || 0;
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true){
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    if (onProgress) onProgress(received, total);
+  }
+  return new Blob(chunks);
+}
+
+function isLocalLikeOrigin(){
+  return location.protocol === "file:" ||
+         location.hostname === "localhost" ||
+         location.hostname === "127.0.0.1";
+}
+
+async function loadUK1FromReleaseOrCache(){
+  $("model-info").textContent = "Loading UK1...";
+
+  // Local sidecar GLB wins when running offline
+  if (isLocalLikeOrigin()){
+    try {
+      const head = await fetch("./uk1_outboxer.glb", { method: "HEAD" });
+      if (head.ok){
+        console.log("[uk1] using local ./uk1_outboxer.glb");
+        return "./uk1_outboxer.glb";
+      }
+    } catch(e){ /* fall through */ }
+  }
+
+  const cached = await getCachedBlob(UK1_CACHE_KEY);
+  if (cached){
+    console.log("[uk1] loaded from IndexedDB cache:", (cached.size/1024/1024).toFixed(1), "MB");
+    toast("UK1 loaded from cache.", "success");
+    return URL.createObjectURL(cached);
+  }
+
+  console.log("[uk1] downloading from release:", UK1_URL);
+  showUK1Progress("Connecting to GitHub...", 0);
+  const blob = await downloadWithProgress(UK1_URL, (received, total) => {
+    const mb  = (received/1024/1024).toFixed(1);
+    const tot = total ? (total/1024/1024).toFixed(1) : "?";
+    const pct = total ? (received/total*100) : 0;
+    showUK1Progress(mb + " MB / " + tot + " MB", pct);
+  });
+  showUK1Progress("Caching on this device...", 100);
+  await cacheBlob(UK1_CACHE_KEY, blob);
+  showUK1Progress(null);
+  return URL.createObjectURL(blob);
+}
+
+$("btn-load-uk1").addEventListener("click", async () => {
+  try {
+    const url = await loadUK1FromReleaseOrCache();
+    loadGLBFromUrl(url, "UK1");
+  } catch(e){
+    showUK1Progress(null);
+    toast("UK1 load failed: " + e.message, "error");
+    console.error("[uk1] load failed:", e);
+  }
+});
+
+$("btn-clear-uk1-cache").addEventListener("click", async () => {
+  if (!confirm("Clear the cached UK1 character? It will re-download on next load.")) return;
+  await clearUK1Cache();
+  toast("UK1 cache cleared.", "success");
 });
 
 function onModelLoaded(gltf){
@@ -1770,6 +2010,21 @@ async function requestWakeLock(){
 document.addEventListener("visibilitychange", () => {
   if (wakeLock && document.visibilityState === "visible") requestWakeLock();
 });
+
+/* =============================================================
+   BIG 3D TOGGLE — camera shrinks to thumbnail, 3D scene fills stage
+============================================================= */
+function toggleBig3D(){
+  const s = $("stage");
+  s.classList.toggle("big-3d");
+  const on = s.classList.contains("big-3d");
+  $("btn-big3d").textContent = on ? "Split view" : "Big 3D";
+  $("btn-big3d").classList.toggle("active", on);
+  // give CSS a frame to apply, then resize the renderer
+  setTimeout(onResize, 60);
+  toast(on ? "Big 3D — camera shrunk." : "Split view restored.", "");
+}
+$("btn-big3d").addEventListener("click", toggleBig3D);
 
 /* =============================================================
    BOOT

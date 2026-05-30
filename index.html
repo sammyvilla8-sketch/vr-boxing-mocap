@@ -31,14 +31,59 @@
   .stat .dot.yellow { background: var(--warn); }
   .stat .dot.red   { background: var(--bad); }
 
+  /* ====== Split center: webcam panel (left ~30%) + 3D scene panel (right ~70%) ====== */
+  #center { display:grid; grid-template-columns: 30% 70%; min-height:0; }
+  #video-panel { position:relative; background:#000; border-right:1px solid var(--border); overflow:hidden; min-height:0; }
+  #scene-panel { position:relative; background:#101216; min-height:0; }
+
   canvas#three { width:100%; height:100%; display:block; }
-  #webcam-preview, #video-preview { position:absolute; top:8px; left:8px; width:320px; height:240px;
-                    border:1px solid var(--border); border-radius:4px; background:#000; z-index:5; overflow:hidden; }
-  #webcam-preview video, #webcam-preview canvas,
-  #video-preview video, #video-preview canvas { width:100%; height:100%; object-fit:contain; }
+
+  /* Webcam / video previews fill the left panel by default */
+  #webcam-preview, #video-preview {
+    position:absolute; inset:0; width:100%; height:100%;
+    border:none; border-radius:0; background:#000; z-index:5; overflow:hidden;
+  }
+  #webcam-preview video, #video-preview video { width:100%; height:100%; object-fit:contain; }
   #webcam-preview .label, #video-preview .label { position:absolute; top:4px; left:4px; background:rgba(0,0,0,0.6); padding:2px 6px;
                            font-size:11px; border-radius:3px; z-index:2; }
-  #webcam-preview canvas, #video-preview canvas { position:absolute; top:0; left:0; pointer-events:none; }
+  #webcam-preview canvas, #video-preview canvas { position:absolute; top:0; left:0; pointer-events:none; width:100%; height:100%; }
+
+  /* "Big 3D" mode: webcam shrinks to a ~200px corner thumb inside #scene-panel */
+  #center.big-3d { grid-template-columns: 1fr; }
+  #center.big-3d #video-panel {
+    position:absolute; top:8px; left:8px; width:200px; height:150px;
+    border:1px solid var(--border); border-radius:4px; z-index:6;
+    box-shadow:0 4px 12px rgba(0,0,0,0.5);
+  }
+  #center.big-3d #scene-panel { grid-column:1/-1; }
+
+  /* "Popout" mode: ?mode=popout → hide all panels except the 3D scene */
+  body.popout-mode #app { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  body.popout-mode #left, body.popout-mode #right, body.popout-mode #statusbar,
+  body.popout-mode #video-panel, body.popout-mode #scene-overlay-controls,
+  body.popout-mode #timeline, body.popout-mode #uk1-progress { display:none !important; }
+  body.popout-mode #center { grid-template-columns: 1fr; }
+  body.popout-mode #scene-panel { grid-column:1/-1; }
+
+  /* Top-right controls overlay inside #scene-panel */
+  #scene-overlay-controls {
+    position:absolute; top:8px; right:8px; z-index:7;
+    display:flex; gap:6px; background:rgba(20,22,26,0.78);
+    padding:4px; border-radius:4px; border:1px solid var(--border);
+  }
+  #scene-overlay-controls button { font-size:11px; padding:4px 8px; }
+
+  /* UK1 download progress bar (full-width banner across scene panel) */
+  #uk1-progress {
+    position:absolute; bottom:8px; left:8px; right:8px;
+    background:rgba(15,18,22,0.92); border:1px solid var(--border);
+    border-radius:4px; padding:8px 12px; z-index:8; display:none;
+    font-size:12px; color:var(--fg);
+  }
+  #uk1-progress.visible { display:block; }
+  #uk1-progress .bar { height:8px; background:#111; border-radius:3px; margin-top:6px; overflow:hidden; }
+  #uk1-progress .bar .fill { height:100%; background:var(--accent); width:0%; transition:width 0.15s; }
+  #uk1-progress .label-row { display:flex; justify-content:space-between; }
 
   .mode-toggle { display:flex; gap:0; border:1px solid var(--border); border-radius:4px; overflow:hidden; margin-bottom:4px; }
   .mode-toggle label { flex:1; text-align:center; padding:6px 8px; cursor:pointer; font-size:12px; color:var(--muted);
@@ -157,6 +202,9 @@
         <div class="row">
           <button id="btn-tpose-character">Force T-Pose</button>
         </div>
+        <div class="row">
+          <button id="btn-clear-uk1-cache" title="Delete the cached UK1 GLB so it re-downloads on next load">Clear UK1 cache</button>
+        </div>
       </div>
     </div>
 
@@ -252,35 +300,59 @@
 
   </div>
 
-  <!-- ============ CENTER VIEW ============ -->
+  <!-- ============ CENTER VIEW (split panels) ============ -->
   <div id="center">
-    <canvas id="three"></canvas>
-    <div id="webcam-preview">
-      <span class="label">Webcam</span>
-      <video id="cam-video" autoplay playsinline muted></video>
-      <canvas id="cam-overlay"></canvas>
-    </div>
-    <div id="video-preview" style="display:none;">
-      <span class="label" id="video-preview-label">Video</span>
-      <video id="video-file" playsinline muted></video>
-      <canvas id="video-overlay"></canvas>
+
+    <!-- LEFT: real-life video + MediaPipe landmark overlay -->
+    <div id="video-panel">
+      <div id="webcam-preview">
+        <span class="label">Webcam (real life)</span>
+        <video id="cam-video" autoplay playsinline muted></video>
+        <canvas id="cam-overlay"></canvas>
+      </div>
+      <div id="video-preview" style="display:none;">
+        <span class="label" id="video-preview-label">Video (real life)</span>
+        <video id="video-file" playsinline muted></video>
+        <canvas id="video-overlay"></canvas>
+      </div>
     </div>
 
-    <div id="timeline">
-      <div class="tl-track" id="tl-track">
-        <div class="tl-region" id="tl-region"></div>
-        <div class="tl-marker in"    id="tl-in"></div>
-        <div class="tl-marker out"   id="tl-out"></div>
-        <div class="tl-marker scrub" id="tl-scrub"></div>
+    <!-- RIGHT: clean 3D character + stick figure overlay -->
+    <div id="scene-panel">
+      <canvas id="three"></canvas>
+
+      <div id="scene-overlay-controls">
+        <button id="btn-big3d" title="Big 3D (B): shrink webcam to thumbnail">Big 3D (B)</button>
+        <button id="btn-popout" title="Popout 3D into a separate window (P)">Popout 3D (P)</button>
       </div>
-      <div class="tl-info">
-        <span>Frame: <b id="tl-frame">0</b>/<b id="tl-total">0</b></span>
-        <span>IN: <b id="tl-in-label">0.00s</b> (I)</span>
-        <span>OUT: <b id="tl-out-label">0.00s</b> (O)</span>
-        <span><label><input type="checkbox" id="tl-loop"/> Loop trim</label></span>
-        <span><button id="tl-play">Play</button></span>
+
+      <!-- UK1 download progress (visible while fetching from GitHub Release) -->
+      <div id="uk1-progress">
+        <div class="label-row">
+          <span id="uk1-progress-text">Downloading UK1 character...</span>
+          <span id="uk1-progress-pct">0%</span>
+        </div>
+        <div class="bar"><div class="fill" id="uk1-progress-fill"></div></div>
+        <div class="hint" style="margin-top:4px;">First-time download. Cached after this — stays available offline.</div>
       </div>
-    </div>
+
+      <div id="timeline">
+        <div class="tl-track" id="tl-track">
+          <div class="tl-region" id="tl-region"></div>
+          <div class="tl-marker in"    id="tl-in"></div>
+          <div class="tl-marker out"   id="tl-out"></div>
+          <div class="tl-marker scrub" id="tl-scrub"></div>
+        </div>
+        <div class="tl-info">
+          <span>Frame: <b id="tl-frame">0</b>/<b id="tl-total">0</b></span>
+          <span>IN: <b id="tl-in-label">0.00s</b> (I)</span>
+          <span>OUT: <b id="tl-out-label">0.00s</b> (O)</span>
+          <span><label><input type="checkbox" id="tl-loop"/> Loop trim</label></span>
+          <span><button id="tl-play">Play</button></span>
+        </div>
+      </div>
+
+    </div> <!-- /scene-panel -->
 
     <div id="toast"></div>
   </div>
@@ -351,7 +423,7 @@
     <div class="stat"><span class="dot" id="dot-cal"></span><span>Calibrated: <b id="stat-cal">No</b></span></div>
     <div class="stat"><span class="dot" id="dot-rec"></span><span>Frames: <b id="stat-frames">0</b></span></div>
     <div class="stat"><span class="dot"></span><span>Takes: <b id="stat-takes">0</b></span></div>
-    <div class="stat" style="margin-left:auto;"><span>Hotkeys: 1/2/3=stick figure  S=skeleton  I=in  O=out  Space=play</span></div>
+    <div class="stat" style="margin-left:auto;"><span>Hotkeys: 1/2/3=stick  S=skeleton  B=big 3D  P=popout  I/O=trim  Space=play</span></div>
   </div>
 
 </div>
@@ -2261,73 +2333,263 @@ function updateStickFigure(poseWorldLandmarks) {
   }
 }
 
-// Key bindings: 1 / 2 / 3 for stick figure modes
+// Key bindings: 1 / 2 / 3 for stick figure modes, B for Big 3D toggle, P for Popout
+// (skipped in popout-mode window — popout has no split layout / stick controls)
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
+  if (document.body.classList.contains("popout-mode")) return;
   if (e.key === "1") { STICK.mode = 1; applyStickFigureMode(); toast("Stick figure: side-by-side", ""); }
   else if (e.key === "2") { STICK.mode = 2; applyStickFigureMode(); toast("Stick figure: overlap + bone arrows", ""); }
   else if (e.key === "3") { STICK.mode = 3; applyStickFigureMode(); toast("Stick figure: hidden", ""); }
+  else if (e.key === "b" || e.key === "B") { toggleBig3D(); }
+  else if (e.key === "p" || e.key === "P") { openPopout3D(); }
 });
 
 /* =============================================================
-   AUTO-LOAD DEFAULT CHARACTER (./uk1_outboxer.glb if present)
-   This makes one-click launch possible: if a GLB sits next to
-   index.html, load it automatically. Manual file picker still
-   works for loading any other character.
+   UK1 CHARACTER: local file (dev) OR GitHub Release + IndexedDB cache
+   ----
+   On file:// or localhost, prefer ./uk1_outboxer.glb (instant, no network).
+   On a hosted Pages build, fall back to the v1 GitHub Release asset and
+   stream-download it once with a progress bar, then cache the blob in
+   IndexedDB so the user never re-downloads on this device.
 ============================================================= */
-function autoLoadDefaultCharacter() {
-  const url = "./uk1_outboxer.glb";
-  // HEAD probe first so we don't spam console with 404 on missing file
-  fetch(url, { method: "HEAD" })
-    .then(res => {
-      if (!res.ok) {
-        console.log("[auto-load] no default character at", url, "- waiting for manual file pick.");
-        $("model-info").textContent = "No model loaded. (Drop GLB above, or place uk1_outboxer.glb next to index.html.)";
-        return;
-      }
-      console.log("[auto-load] found default character, loading", url);
-      $("model-info").textContent = "Auto-loading uk1_outboxer.glb...";
-      const loader = makeGLTFLoader();
-      loader.load(url, gltf => {
-        onModelLoaded(gltf, "character");
-        toast("UK1 auto-loaded - calibrate T-pose to start.", "success");
-        $("model-info").innerHTML = $("model-info").innerHTML +
-          '<br><span style="color:var(--good)">&#10004; UK1 auto-loaded - calibrate T-pose to start</span>';
-      }, undefined, err => {
-        toast("Auto-load failed: " + err.message, "error");
-        console.error("[auto-load] GLB load error:", err);
-        $("model-info").textContent = "Auto-load failed. Use file picker above.";
-      });
-    })
-    .catch(err => {
-      // fetch can fail under file:// in some configurations; fall back silently
-      console.log("[auto-load] HEAD probe failed (likely file:// restriction):", err.message);
-      // Try direct load anyway — many browsers allow same-folder file:// GLB load
-      const loader = makeGLTFLoader();
-      loader.load(url, gltf => {
-        onModelLoaded(gltf, "character");
-        toast("UK1 auto-loaded - calibrate T-pose to start.", "success");
-        $("model-info").innerHTML = $("model-info").innerHTML +
-          '<br><span style="color:var(--good)">&#10004; UK1 auto-loaded - calibrate T-pose to start</span>';
-      }, undefined, () => {
-        // Quiet fail — no default character present
-        $("model-info").textContent = "No model loaded. (Drop GLB above, or place uk1_outboxer.glb next to index.html.)";
-      });
+const UK1_URL       = "https://github.com/sammyvilla8-sketch/vr-boxing-mocap/releases/download/v1/uk1_outboxer.glb";
+const UK1_CACHE_KEY = "uk1_glb_v1";
+const UK1_CACHE_DB  = "vr_boxing_mocap_cache";
+const UK1_STORE     = "blobs";
+
+function openCacheDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(UK1_CACHE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(UK1_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function getCachedBlob(key) {
+  try {
+    const db = await openCacheDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(UK1_STORE, "readonly");
+      const r = tx.objectStore(UK1_STORE).get(key);
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => reject(r.error);
     });
+  } catch (e) { console.warn("[uk1 cache] read failed:", e); return null; }
+}
+async function cacheBlob(key, blob) {
+  try {
+    const db = await openCacheDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(UK1_STORE, "readwrite");
+      const r = tx.objectStore(UK1_STORE).put(blob, key);
+      r.onsuccess = () => resolve();
+      r.onerror = () => reject(r.error);
+    });
+    console.log("[uk1 cache] wrote", (blob.size/1024/1024).toFixed(1), "MB to IndexedDB");
+  } catch (e) { console.warn("[uk1 cache] write failed:", e); }
+}
+async function clearUK1Cache() {
+  return new Promise((resolve) => {
+    const r = indexedDB.deleteDatabase(UK1_CACHE_DB);
+    r.onsuccess = r.onerror = r.onblocked = () => resolve();
+  });
+}
+window.clearUK1Cache = clearUK1Cache;
+
+function showUK1Progress(text, pct) {
+  const el = $("uk1-progress");
+  if (!el) return;
+  if (text === null) { el.classList.remove("visible"); return; }
+  el.classList.add("visible");
+  $("uk1-progress-text").textContent = text;
+  if (pct != null) {
+    $("uk1-progress-pct").textContent = pct.toFixed(0) + "%";
+    $("uk1-progress-fill").style.width = pct + "%";
+  }
+}
+
+async function downloadWithProgress(url, onProgress) {
+  const response = await fetch(url, { mode: "cors" });
+  if (!response.ok) throw new Error("HTTP " + response.status + " fetching UK1");
+  const total = +response.headers.get("Content-Length") || 0;
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    if (onProgress) onProgress(received, total);
+  }
+  return new Blob(chunks);
+}
+
+function isLocalLikeOrigin() {
+  return location.protocol === "file:" ||
+         location.hostname === "localhost" ||
+         location.hostname === "127.0.0.1";
+}
+
+async function loadUK1FromReleaseOrCache() {
+  $("model-info").textContent = "Loading UK1...";
+
+  // Step 1: prefer local sidecar GLB when running locally (instant, no network)
+  if (isLocalLikeOrigin()) {
+    try {
+      const head = await fetch("./uk1_outboxer.glb", { method: "HEAD" });
+      if (head.ok) {
+        console.log("[uk1] using local ./uk1_outboxer.glb");
+        return "./uk1_outboxer.glb";
+      }
+    } catch (e) { /* fall through */ }
+  }
+
+  // Step 2: check IndexedDB cache
+  const cached = await getCachedBlob(UK1_CACHE_KEY);
+  if (cached) {
+    console.log("[uk1] loaded from IndexedDB cache:", (cached.size/1024/1024).toFixed(1), "MB");
+    toast("UK1 loaded from cache.", "success");
+    return URL.createObjectURL(cached);
+  }
+
+  // Step 3: stream-download from GitHub Release with progress UI
+  console.log("[uk1] downloading from release:", UK1_URL);
+  showUK1Progress("Downloading UK1 character from GitHub Release...", 0);
+  const blob = await downloadWithProgress(UK1_URL, (received, total) => {
+    const mb = (received/1024/1024).toFixed(1);
+    const tot = total ? (total/1024/1024).toFixed(1) : "?";
+    const pct = total ? (received/total*100) : 0;
+    showUK1Progress(`Downloading UK1: ${mb} MB / ${tot} MB`, pct);
+  });
+  showUK1Progress("Caching for next time...", 100);
+  await cacheBlob(UK1_CACHE_KEY, blob);
+  showUK1Progress(null);
+  return URL.createObjectURL(blob);
+}
+
+async function autoLoadDefaultCharacter() {
+  try {
+    const url = await loadUK1FromReleaseOrCache();
+    const loader = makeGLTFLoader();
+    loader.load(url, gltf => {
+      onModelLoaded(gltf, "character");
+      toast("UK1 loaded - calibrate T-pose to start.", "success");
+      $("model-info").innerHTML = $("model-info").innerHTML +
+        '<br><span style="color:var(--good)">&#10004; UK1 loaded - calibrate T-pose to start</span>';
+    }, undefined, err => {
+      toast("UK1 load failed: " + err.message, "error");
+      console.error("[uk1] GLB parse error:", err);
+      $("model-info").textContent = "UK1 load failed. Use file picker above.";
+    });
+  } catch (e) {
+    console.warn("[uk1] auto-load failed:", e);
+    showUK1Progress(null);
+    $("model-info").textContent = "No model loaded. Use file picker above, or check network for the GitHub Release.";
+    toast("UK1 auto-load failed: " + e.message, "error");
+  }
+}
+
+/* =============================================================
+   SPLIT-PANEL UI: Big 3D toggle + Popout 3D window
+============================================================= */
+function toggleBig3D() {
+  const c = document.getElementById("center");
+  c.classList.toggle("big-3d");
+  const on = c.classList.contains("big-3d");
+  $("btn-big3d").textContent = on ? "Split view (B)" : "Big 3D (B)";
+  setTimeout(onResize, 50);
+  toast(on ? "Big 3D mode — webcam shrunk to thumbnail." : "Split view restored.", "");
+}
+
+let popoutWin = null;
+function openPopout3D() {
+  if (popoutWin && !popoutWin.closed) { popoutWin.focus(); return; }
+  const u = new URL(location.href);
+  u.searchParams.set("mode", "popout");
+  popoutWin = window.open(u.toString(), "vrmocap_popout",
+    "width=1100,height=750,resizable=yes,scrollbars=no");
+  if (!popoutWin) { toast("Popout blocked by browser — allow popups for this page.", "error"); return; }
+  toast("Popout opened — drag it to your second monitor.", "success");
+}
+
+/* If we're loaded in popout mode, hide everything except the 3D scene and
+   render the OPENER window's scene from a fresh camera in this window. */
+function initPopoutMode() {
+  const params = new URLSearchParams(location.search);
+  if (params.get("mode") !== "popout") return false;
+  document.body.classList.add("popout-mode");
+  document.title = "VR Boxing — 3D Popout";
+
+  function tryAttach() {
+    if (!window.opener || !window.opener.APP || !window.opener.APP.scene || !window.THREE) {
+      setTimeout(tryAttach, 100); return;
+    }
+    const canvas = document.getElementById("three");
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 200);
+    camera.position.set(2.0, 1.6, 3.0);
+    const controls = new THREE.OrbitControls(camera, canvas);
+    controls.target.set(0, 1.0, 0); controls.enableDamping = true; controls.update();
+
+    function resize() {
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      if (!w || !h) return;
+      renderer.setSize(w, h, false);
+      camera.aspect = w/h; camera.updateProjectionMatrix();
+    }
+    window.addEventListener("resize", resize); resize();
+
+    (function loop(){
+      if (window.opener && window.opener.APP && window.opener.APP.scene) {
+        controls.update();
+        renderer.render(window.opener.APP.scene, camera);
+      }
+      requestAnimationFrame(loop);
+    })();
+    console.log("[popout] attached to opener.APP.scene");
+  }
+  tryAttach();
+  return true;
 }
 
 /* =============================================================
    BOOT
 ============================================================= */
-initThree();
-initStickFigure();
-applyStickFigureMode();
-bindVideoControls();
-updateModeStatus();
-autoLoadDefaultCharacter();
-console.log("[boot] VR Boxing Browser Mocap ready. window.APP, window.boneCorrections, window.charBones exposed.");
-console.log("[boot] Hotkeys: 1=stick side-by-side, 2=stick overlap+arrows, 3=stick hidden, S=skeleton, I/O=trim, Space=play.");
-console.log("[boot] Modes: Live Webcam (default) | Pre-recorded Video. Toggle at top of left panel.");
+// If we were opened as a popout window (?mode=popout), render the opener's
+// scene from a fresh camera and skip all normal initialization.
+if (initPopoutMode()) {
+  console.log("[boot] popout mode active.");
+} else {
+  initThree();
+  initStickFigure();
+  applyStickFigureMode();
+  bindVideoControls();
+  updateModeStatus();
+
+  // Scene-overlay buttons (only meaningful in normal mode)
+  $("btn-big3d").addEventListener("click", toggleBig3D);
+  $("btn-popout").addEventListener("click", openPopout3D);
+
+  autoLoadDefaultCharacter();
+
+  // Clear cache button
+  const clearBtn = document.getElementById("btn-clear-uk1-cache");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", async () => {
+      if (!confirm("Clear the cached UK1 character? It will re-download on next reload.")) return;
+      await clearUK1Cache();
+      toast("UK1 cache cleared. Reload to re-download.", "success");
+    });
+  }
+
+  console.log("[boot] VR Boxing Browser Mocap ready. window.APP, window.boneCorrections, window.charBones exposed.");
+  console.log("[boot] Hotkeys: 1/2/3=stick figure, S=skeleton, B=big 3D, P=popout, I/O=trim, Space=play.");
+  console.log("[boot] Modes: Live Webcam (default) | Pre-recorded Video. Toggle at top of left panel.");
+}
 
 </script>
 

@@ -23,6 +23,32 @@ MediaPipe+ARP / MediaPipe-v2 pipeline failures. The point of this tool is
 hot-reload of bone-correction Eulers via on-screen sliders and the
 DevTools console.
 
+## UK1 character: hosted via GitHub Release + IndexedDB cache
+
+`uk1_outboxer.glb` is `.gitignore`d out of the repo (originally ~478 MB
+before Draco compression, now ~67 MB — still big enough that it would
+bloat clones and push against Pages bandwidth quotas). Instead, it's
+hosted as the `v1` GitHub Release asset:
+
+```
+https://github.com/sammyvilla8-sketch/vr-boxing-mocap/releases/download/v1/uk1_outboxer.glb
+```
+
+Both HTMLs auto-fetch from that URL on first load and stash the blob in
+**IndexedDB** under the key `uk1_glb_v1` (database
+`vr_boxing_mocap_cache`). After the first visit on a device, subsequent
+loads are instant — no network, no progress bar. The download UI shows
+percent + MB-of-MB while the fetch is in flight, with the message
+"First-time download. Cached after this — stays available offline."
+
+Override: if the page is served from `file://` or `localhost`, the tool
+prefers `./uk1_outboxer.glb` sitting next to the HTML (so the Desktop
+launcher keeps working instantly without network).
+
+Clear the cache from the **Clear UK1 cache** button in the Model panel
+(desktop) or Character card (iPad), or from the console:
+`await window.clearUK1Cache(); location.reload();`
+
 ## Launching
 
 ### ONE-CLICK MODE (the recommended way)
@@ -201,6 +227,41 @@ For hours of saved footage (e.g. iPhone IMG_*.MOV takes from the
   frame. So you can scrub through a take frame-by-frame and watch the
   character pose update in real time.
 
+## Split-panel layout
+
+Both `index.html` (desktop) and `ipad.html` use a split layout:
+
+- **Left panel** (~30% width on landscape, top ~30% height on portrait
+  phones) — the **real-life camera** or pre-recorded video, with the
+  MediaPipe landmark dots drawn directly on top. This is the QC view for
+  "is MediaPipe actually finding my joints?"
+- **Right panel** (~70%) — the **clean 3D scene**: the UK1 character
+  mimicking the motion, plus the cyan stick figure showing what
+  MediaPipe thinks the skeleton looks like. This is the QC view for "is
+  retargeting working?"
+
+The two panels are intentionally separate so neither crowds the other.
+The stick-figure overlay still has three modes (`1` / `2` / `3` keys on
+desktop, on-screen seg control on iPad).
+
+### Big 3D mode
+
+Press `B` (desktop) or tap the "Big 3D" button (top-right of the 3D
+scene panel on iPad) to shrink the camera feed to a small corner
+thumbnail and let the 3D scene fill the stage. Press again to return to
+split view.
+
+### Popout 3D (desktop only)
+
+Press `P` (desktop) or click the "Popout 3D" button to open the 3D scene
+in a separate browser window. Drag it to a second monitor so the 3D
+character has its own dedicated screen, while the main window keeps the
+left/right control panels and the camera feed. The popout window shares
+the original window's three.js scene by reference and renders it from
+its own free camera (independent OrbitControls), so bone state stays
+synced with zero broadcast overhead. The popout is hidden on iPad
+because iOS Safari doesn't support multi-window.
+
 ## Hotkeys
 
 - `1` - stick-figure side-by-side (raw MediaPipe pose, 1.5m to character's left)
@@ -209,6 +270,8 @@ For hours of saved footage (e.g. iPhone IMG_*.MOV takes from the
         that bone's correction quaternion is wrong.
 - `3` - stick-figure hidden
 - `S` - toggle skeleton overlay
+- `B` - toggle Big 3D mode (camera shrinks to corner thumbnail)
+- `P` - open the 3D scene in a popout window for a second monitor
 - `I` - set trim IN at playhead
 - `O` - set trim OUT at playhead
 - `Space` - play/pause the take timeline (NOT the source video; the
@@ -293,8 +356,11 @@ to confirm the animation survived serialisation.
 - `PRESET_CC5_DEFAULTS.json` - starting bone correction values for CC5
 - `uk1_outboxer.glb` - pre-converted UK1 character (~67 MB, Draco-
   compressed, textures stripped, hair/eyelashes/stubble removed,
-  body/eyes/teeth/shorts decimated for browser speed). Auto-loaded
-  when the tool boots if present next to `index.html`.
+  body/eyes/teeth/shorts decimated for browser speed). On a local
+  launch (file:// or localhost) the tool auto-loads this file from the
+  same folder. On the hosted Pages build, the file is fetched from the
+  GitHub Release (see "UK1 character: hosted via GitHub Release"). The
+  GLB itself is .gitignored so the repo stays small.
 - `LAUNCH_MOCAP.bat` - source for the Desktop one-click launcher.
 - `_convert_uk1.bat` + `_convert_uk1.py` - the Blender headless
   conversion (FBX -> compact GLB). Rerun if the source FBX changes.

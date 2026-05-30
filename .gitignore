@@ -28,3 +28,6 @@ desktop.ini
 # Local node noise if anyone npm's
 node_modules/
 package-lock.json
+
+# Scratch files from validation runs (extracted inline JS for node --check)
+*_inline.js
