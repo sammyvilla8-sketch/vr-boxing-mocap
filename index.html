@@ -31,14 +31,31 @@
   .stat .dot.yellow { background: var(--warn); }
   .stat .dot.red   { background: var(--bad); }
 
-  /* ====== Split center: webcam panel (left ~30%) + 3D scene panel (right ~70%) ====== */
-  #center { display:grid; grid-template-columns: 30% 70%; min-height:0; }
-  #video-panel { position:relative; background:#000; border-right:1px solid var(--border); overflow:hidden; min-height:0; }
-  #scene-panel { position:relative; background:#101216; min-height:0; }
+  /* ====== DEFAULT: 3D scene fills center column; camera = corner overlay ======
+     This keeps the 3D character at full width (so it isn't squeezed) while the
+     camera sits as a draggable/resizable corner thumbnail. Toggle classes
+     change layout: .split-view = side-by-side panels, .big-3d = tiny corner
+     thumb, body.popout-* hide everything except one panel for second-monitor
+     usage. */
+  #center { position: relative; }
+  #scene-panel { position: relative; background:#101216; width:100%; height:100%; min-height:0; }
 
   canvas#three { width:100%; height:100%; display:block; }
 
-  /* Webcam / video previews fill the left panel by default */
+  /* Camera/video corner overlay — visible by default. Resize handle in the
+     bottom-right of the panel (browser's native CSS resize). */
+  #video-panel {
+    position: absolute; top: 12px; left: 12px;
+    width: 400px; height: 300px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: #000; z-index: 6;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.55);
+    overflow: hidden;
+    resize: both;
+    min-width: 160px; min-height: 120px;
+    max-width: 90%; max-height: 90%;
+  }
+
   #webcam-preview, #video-preview {
     position:absolute; inset:0; width:100%; height:100%;
     border:none; border-radius:0; background:#000; z-index:5; overflow:hidden;
@@ -48,16 +65,21 @@
                            font-size:11px; border-radius:3px; z-index:2; }
   #webcam-preview canvas, #video-preview canvas { position:absolute; top:0; left:0; pointer-events:none; width:100%; height:100%; }
 
-  /* "Big 3D" mode: webcam shrinks to a ~200px corner thumb inside #scene-panel */
-  #center.big-3d { grid-template-columns: 1fr; }
-  #center.big-3d #video-panel {
-    position:absolute; top:8px; left:8px; width:200px; height:150px;
-    border:1px solid var(--border); border-radius:4px; z-index:6;
-    box-shadow:0 4px 12px rgba(0,0,0,0.5);
-  }
-  #center.big-3d #scene-panel { grid-column:1/-1; }
+  /* "Big 3D" mode: shrink corner overlay to a small thumb */
+  #center.big-3d #video-panel { width: 200px !important; height: 150px !important; resize: none; }
 
-  /* "Popout" mode: ?mode=popout → hide all panels except the 3D scene */
+  /* "Split view" mode: side-by-side panels (35% camera / 65% 3D) — toggle with V key */
+  #center.split-view { display:grid; grid-template-columns: 35% 65%; }
+  #center.split-view #video-panel {
+    position: relative; top: auto; left: auto;
+    width: 100% !important; height: 100% !important;
+    border: none; border-right: 1px solid var(--border);
+    border-radius: 0; box-shadow: none;
+    resize: none; max-width: none; max-height: none;
+  }
+  #center.split-view #scene-panel { /* fills right column automatically */ }
+
+  /* "Popout 3D" mode: ?mode=popout → hide everything except the 3D scene */
   body.popout-mode #app { grid-template-columns: 1fr; grid-template-rows: 1fr; }
   body.popout-mode #left, body.popout-mode #right, body.popout-mode #statusbar,
   body.popout-mode #video-panel, body.popout-mode #scene-overlay-controls,
@@ -65,15 +87,32 @@
   body.popout-mode #center { grid-template-columns: 1fr; }
   body.popout-mode #scene-panel { grid-column:1/-1; }
 
+  /* "Popout Camera" mode: ?mode=popout-cam → hide everything except the camera */
+  body.popout-cam-mode #app { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  body.popout-cam-mode #left, body.popout-cam-mode #right, body.popout-cam-mode #statusbar,
+  body.popout-cam-mode #scene-panel, body.popout-cam-mode #scene-overlay-controls,
+  body.popout-cam-mode #timeline, body.popout-cam-mode #uk1-progress,
+  body.popout-cam-mode #toast { display:none !important; }
+  body.popout-cam-mode #center { grid-template-columns: 1fr; }
+  body.popout-cam-mode #video-panel {
+    position: absolute !important; inset: 0 !important;
+    width: 100% !important; height: 100% !important;
+    border: none !important; border-radius: 0 !important;
+    box-shadow: none !important; resize: none !important;
+    max-width: none !important; max-height: none !important;
+  }
+
   /* Top-right controls overlay inside #scene-panel */
   #scene-overlay-controls {
     position:absolute; top:8px; right:8px; z-index:7;
     display:flex; gap:6px; background:rgba(20,22,26,0.78);
     padding:4px; border-radius:4px; border:1px solid var(--border);
+    flex-wrap: wrap; max-width: 360px; justify-content: flex-end;
   }
   #scene-overlay-controls button { font-size:11px; padding:4px 8px; }
+  #scene-overlay-controls button.active { background: var(--accent); color: #0a0a0a; border-color: var(--accent); }
 
-  /* UK1 download progress bar (full-width banner across scene panel) */
+  /* UK1 download progress bar */
   #uk1-progress {
     position:absolute; bottom:8px; left:8px; right:8px;
     background:rgba(15,18,22,0.92); border:1px solid var(--border);
@@ -322,8 +361,10 @@
       <canvas id="three"></canvas>
 
       <div id="scene-overlay-controls">
-        <button id="btn-big3d" title="Big 3D (B): shrink webcam to thumbnail">Big 3D (B)</button>
-        <button id="btn-popout" title="Popout 3D into a separate window (P)">Popout 3D (P)</button>
+        <button id="btn-split"      title="Side-by-side webcam + 3D panels (V)">Split (V)</button>
+        <button id="btn-big3d"      title="Shrink camera corner thumb to ~200px (B)">Big 3D (B)</button>
+        <button id="btn-popout-cam" title="Open the camera in its own window (C) — drag to second monitor">Popout Cam (C)</button>
+        <button id="btn-popout"     title="Open the 3D scene in its own window (P) — drag to second monitor">Popout 3D (P)</button>
       </div>
 
       <!-- UK1 download progress (visible while fetching from GitHub Release) -->
@@ -423,7 +464,7 @@
     <div class="stat"><span class="dot" id="dot-cal"></span><span>Calibrated: <b id="stat-cal">No</b></span></div>
     <div class="stat"><span class="dot" id="dot-rec"></span><span>Frames: <b id="stat-frames">0</b></span></div>
     <div class="stat"><span class="dot"></span><span>Takes: <b id="stat-takes">0</b></span></div>
-    <div class="stat" style="margin-left:auto;"><span>Hotkeys: 1/2/3=stick  S=skeleton  B=big 3D  P=popout  I/O=trim  Space=play</span></div>
+    <div class="stat" style="margin-left:auto;"><span>Hotkeys: 1/2/3=stick  S=skel  V=split  B=big 3D  C=popout cam  P=popout 3D  I/O=trim  Space=play</span></div>
   </div>
 
 </div>
@@ -2333,15 +2374,17 @@ function updateStickFigure(poseWorldLandmarks) {
   }
 }
 
-// Key bindings: 1 / 2 / 3 for stick figure modes, B for Big 3D toggle, P for Popout
-// (skipped in popout-mode window — popout has no split layout / stick controls)
+// Key bindings: 1/2/3 stick figure, S skeleton, V split, B big 3D, C popout cam, P popout 3D
+// (skipped in popout-mode windows — popouts have no split layout / stick controls)
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
-  if (document.body.classList.contains("popout-mode")) return;
+  if (document.body.classList.contains("popout-mode") || document.body.classList.contains("popout-cam-mode")) return;
   if (e.key === "1") { STICK.mode = 1; applyStickFigureMode(); toast("Stick figure: side-by-side", ""); }
   else if (e.key === "2") { STICK.mode = 2; applyStickFigureMode(); toast("Stick figure: overlap + bone arrows", ""); }
   else if (e.key === "3") { STICK.mode = 3; applyStickFigureMode(); toast("Stick figure: hidden", ""); }
+  else if (e.key === "v" || e.key === "V") { toggleSplitView(); }
   else if (e.key === "b" || e.key === "B") { toggleBig3D(); }
+  else if (e.key === "c" || e.key === "C") { openPopoutCamera(); }
   else if (e.key === "p" || e.key === "P") { openPopout3D(); }
 });
 
@@ -2492,15 +2535,34 @@ async function autoLoadDefaultCharacter() {
 }
 
 /* =============================================================
-   SPLIT-PANEL UI: Big 3D toggle + Popout 3D window
+   LAYOUT TOGGLES + POPOUT WINDOWS
+   Default: 3D scene fills center, camera = draggable/resizable corner overlay.
+   V key  / "Split"   : side-by-side panel mode (35/65)
+   B key  / "Big 3D"  : shrink camera corner thumb to ~200px
+   C key  / "Popout Cam" : open the camera in its own window (second monitor)
+   P key  / "Popout 3D"  : open the 3D scene in its own window
 ============================================================= */
+function toggleSplitView() {
+  const c = document.getElementById("center");
+  c.classList.toggle("split-view");
+  // mutually exclusive with big-3d
+  if (c.classList.contains("split-view")) c.classList.remove("big-3d");
+  const on = c.classList.contains("split-view");
+  $("btn-split").classList.toggle("active", on);
+  $("btn-big3d").classList.remove("active");
+  setTimeout(onResize, 50);
+  toast(on ? "Split view — webcam + 3D side-by-side." : "Split view off — camera back to corner overlay.", "");
+}
+
 function toggleBig3D() {
   const c = document.getElementById("center");
   c.classList.toggle("big-3d");
+  if (c.classList.contains("big-3d")) c.classList.remove("split-view");
   const on = c.classList.contains("big-3d");
-  $("btn-big3d").textContent = on ? "Split view (B)" : "Big 3D (B)";
+  $("btn-big3d").classList.toggle("active", on);
+  $("btn-split").classList.remove("active");
   setTimeout(onResize, 50);
-  toast(on ? "Big 3D mode — webcam shrunk to thumbnail." : "Split view restored.", "");
+  toast(on ? "Big 3D — camera shrunk to small thumb." : "Camera corner overlay restored.", "");
 }
 
 let popoutWin = null;
@@ -2508,52 +2570,104 @@ function openPopout3D() {
   if (popoutWin && !popoutWin.closed) { popoutWin.focus(); return; }
   const u = new URL(location.href);
   u.searchParams.set("mode", "popout");
-  popoutWin = window.open(u.toString(), "vrmocap_popout",
+  popoutWin = window.open(u.toString(), "vrmocap_popout_3d",
     "width=1100,height=750,resizable=yes,scrollbars=no");
   if (!popoutWin) { toast("Popout blocked by browser — allow popups for this page.", "error"); return; }
-  toast("Popout opened — drag it to your second monitor.", "success");
+  toast("3D popout opened — drag it to your second monitor.", "success");
 }
 
-/* If we're loaded in popout mode, hide everything except the 3D scene and
-   render the OPENER window's scene from a fresh camera in this window. */
+let popoutCamWin = null;
+function openPopoutCamera() {
+  if (popoutCamWin && !popoutCamWin.closed) { popoutCamWin.focus(); return; }
+  const u = new URL(location.href);
+  u.searchParams.set("mode", "popout-cam");
+  popoutCamWin = window.open(u.toString(), "vrmocap_popout_cam",
+    "width=800,height=600,resizable=yes,scrollbars=no");
+  if (!popoutCamWin) { toast("Popout blocked by browser — allow popups for this page.", "error"); return; }
+  toast("Camera popout opened — drag it to your second monitor.", "success");
+}
+
+/* If we're loaded in popout mode, attach to the opener and render only the
+   relevant panel. */
 function initPopoutMode() {
   const params = new URLSearchParams(location.search);
-  if (params.get("mode") !== "popout") return false;
-  document.body.classList.add("popout-mode");
-  document.title = "VR Boxing — 3D Popout";
+  const mode = params.get("mode");
 
-  function tryAttach() {
-    if (!window.opener || !window.opener.APP || !window.opener.APP.scene || !window.THREE) {
-      setTimeout(tryAttach, 100); return;
-    }
-    const canvas = document.getElementById("three");
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.outputEncoding = THREE.sRGBEncoding;
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 200);
-    camera.position.set(2.0, 1.6, 3.0);
-    const controls = new THREE.OrbitControls(camera, canvas);
-    controls.target.set(0, 1.0, 0); controls.enableDamping = true; controls.update();
-
-    function resize() {
-      const w = canvas.clientWidth, h = canvas.clientHeight;
-      if (!w || !h) return;
-      renderer.setSize(w, h, false);
-      camera.aspect = w/h; camera.updateProjectionMatrix();
-    }
-    window.addEventListener("resize", resize); resize();
-
-    (function loop(){
-      if (window.opener && window.opener.APP && window.opener.APP.scene) {
-        controls.update();
-        renderer.render(window.opener.APP.scene, camera);
+  if (mode === "popout") {
+    document.body.classList.add("popout-mode");
+    document.title = "VR Boxing — 3D Popout";
+    function tryAttach() {
+      if (!window.opener || !window.opener.APP || !window.opener.APP.scene || !window.THREE) {
+        setTimeout(tryAttach, 100); return;
       }
-      requestAnimationFrame(loop);
-    })();
-    console.log("[popout] attached to opener.APP.scene");
+      const canvas = document.getElementById("three");
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 200);
+      camera.position.set(2.0, 1.6, 3.0);
+      const controls = new THREE.OrbitControls(camera, canvas);
+      controls.target.set(0, 1.0, 0); controls.enableDamping = true; controls.update();
+      function resize() {
+        const w = canvas.clientWidth, h = canvas.clientHeight;
+        if (!w || !h) return;
+        renderer.setSize(w, h, false);
+        camera.aspect = w/h; camera.updateProjectionMatrix();
+      }
+      window.addEventListener("resize", resize); resize();
+      (function loop(){
+        if (window.opener && window.opener.APP && window.opener.APP.scene) {
+          controls.update();
+          renderer.render(window.opener.APP.scene, camera);
+        }
+        requestAnimationFrame(loop);
+      })();
+      console.log("[popout] attached to opener.APP.scene");
+    }
+    tryAttach();
+    return true;
   }
-  tryAttach();
-  return true;
+
+  if (mode === "popout-cam") {
+    document.body.classList.add("popout-cam-mode");
+    document.title = "VR Boxing — Camera Popout";
+    // Mirror the opener's camera stream + MediaPipe overlay into this window.
+    function tryAttach() {
+      const op = window.opener;
+      if (!op || !op.APP) { setTimeout(tryAttach, 100); return; }
+      const srcVideo  = op.document.getElementById("cam-video")     || op.document.getElementById("video-file");
+      const srcCanvas = op.document.getElementById("cam-overlay")   || op.document.getElementById("video-overlay");
+      if (!srcVideo) { setTimeout(tryAttach, 100); return; }
+      const myVideo  = document.getElementById("cam-video");
+      const myCanvas = document.getElementById("cam-overlay");
+
+      // MediaStreams + blob URLs are shareable across same-origin windows.
+      if (srcVideo.srcObject) {
+        myVideo.srcObject = srcVideo.srcObject;
+      } else if (srcVideo.src) {
+        myVideo.src = srcVideo.src;
+      }
+      myVideo.muted = true; myVideo.playsInline = true;
+      myVideo.play().catch(()=>{});
+
+      // Mirror the MediaPipe overlay canvas pixel-for-pixel each frame
+      (function loop(){
+        if (srcCanvas && myCanvas && srcCanvas.width > 0 && srcCanvas.height > 0) {
+          if (myCanvas.width !== srcCanvas.width)  myCanvas.width  = srcCanvas.width;
+          if (myCanvas.height !== srcCanvas.height) myCanvas.height = srcCanvas.height;
+          const ctx = myCanvas.getContext("2d");
+          ctx.clearRect(0,0,myCanvas.width,myCanvas.height);
+          try { ctx.drawImage(srcCanvas, 0, 0); } catch (e) { /* ignore taint errors */ }
+        }
+        requestAnimationFrame(loop);
+      })();
+      console.log("[popout-cam] mirroring opener camera + landmark overlay");
+    }
+    tryAttach();
+    return true;
+  }
+
+  return false;
 }
 
 /* =============================================================
@@ -2571,7 +2685,9 @@ if (initPopoutMode()) {
   updateModeStatus();
 
   // Scene-overlay buttons (only meaningful in normal mode)
+  $("btn-split").addEventListener("click", toggleSplitView);
   $("btn-big3d").addEventListener("click", toggleBig3D);
+  $("btn-popout-cam").addEventListener("click", openPopoutCamera);
   $("btn-popout").addEventListener("click", openPopout3D);
 
   autoLoadDefaultCharacter();
@@ -2587,7 +2703,7 @@ if (initPopoutMode()) {
   }
 
   console.log("[boot] VR Boxing Browser Mocap ready. window.APP, window.boneCorrections, window.charBones exposed.");
-  console.log("[boot] Hotkeys: 1/2/3=stick figure, S=skeleton, B=big 3D, P=popout, I/O=trim, Space=play.");
+  console.log("[boot] Hotkeys: 1/2/3=stick, S=skel, V=split, B=big 3D, C=popout cam, P=popout 3D, I/O=trim, Space=play.");
   console.log("[boot] Modes: Live Webcam (default) | Pre-recorded Video. Toggle at top of left panel.");
 }
 

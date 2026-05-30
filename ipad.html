@@ -67,42 +67,52 @@
     #controls { border-left: 1px solid var(--border); border-top: none; }
   }
 
-  /* ============ STAGE: split camera + 3D scene panels ============ */
-  /* Default (portrait / phone): camera on top (~30% height), 3D below (~70%) */
+  /* ============ STAGE: 3D fills stage by default, camera = corner overlay ============
+     Tap "Split" to switch to a side-by-side panel layout instead. Tap "Big 3D"
+     to shrink the corner overlay to a small thumb (best for QC of the
+     character). On portrait phones the corner overlay default is narrower so
+     it doesn't cover the character; on landscape iPad it's wider. */
   #stage {
     position: relative;
     background: #050609;
     min-height: 0;
     overflow: hidden;
-    display: grid;
-    grid-template-columns: 1fr;
-    grid-template-rows: 30% 70%;
-    gap: 0;
   }
-  /* Landscape / iPad: side-by-side panels (camera ~30% wide, 3D ~70%) */
-  @media (orientation: landscape) {
-    #stage {
-      grid-template-columns: 30% 70%;
-      grid-template-rows: 1fr;
-    }
-  }
-  #cam-panel, #scene-panel {
+
+  /* Both panels are children of #stage */
+  #scene-panel {
     position: relative;
     background: #050609;
-    min-height: 0;
-    min-width: 0;
+    width: 100%; height: 100%;
+    min-height: 0; min-width: 0;
     overflow: hidden;
   }
-  #cam-panel { border-right: 1px solid var(--border); }
-  @media (orientation: portrait) {
-    #cam-panel { border-right: none; border-bottom: 1px solid var(--border); }
+
+  /* DEFAULT: camera is an absolutely-positioned corner overlay on the 3D scene */
+  #cam-panel {
+    position: absolute;
+    top: 10px; left: 10px;
+    width: 38vw; max-width: 360px;
+    aspect-ratio: 4/3;
+    z-index: 18;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #000;
+    overflow: hidden;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.55);
   }
+  /* On phones (narrower), keep it a bit more compact */
+  @media (max-width: 640px) {
+    #cam-panel { width: 45vw; max-width: 260px; top: 8px; left: 8px; border-radius: 8px; }
+  }
+
   canvas#three {
     width: 100%;
     height: 100%;
     display: block;
-    touch-action: none; /* let OrbitControls handle gestures */
+    touch-action: none;
   }
+
   /* Camera / video preview boxes fill the cam-panel */
   #cam-box, #vid-box {
     position: relative;
@@ -127,7 +137,6 @@
     padding: 2px 6px; border-radius: 4px;
     font-size: 11px; z-index: 2;
   }
-  /* recording pulse on the preview border */
   #cam-box.rec, #vid-box.rec {
     border-color: var(--rec);
     box-shadow: 0 0 0 3px rgba(255,48,48,0.4), 0 4px 12px rgba(0,0,0,0.4);
@@ -138,22 +147,40 @@
     50%     { box-shadow: 0 0 0 6px rgba(255,48,48,0.15), 0 4px 12px rgba(0,0,0,0.4); }
   }
 
-  /* ============ "BIG 3D" mode: camera shrinks to corner thumbnail ============ */
-  #stage.big-3d {
-    grid-template-columns: 1fr !important;
-    grid-template-rows: 1fr !important;
-  }
+  /* ============ "BIG 3D" mode: camera corner overlay shrinks further ============ */
   #stage.big-3d #cam-panel {
-    position: absolute;
-    top: 8px; left: 8px;
-    width: 180px; height: 135px;
-    z-index: 20;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.55);
-    border: 1px solid var(--border);
+    width: 160px !important; max-width: 160px !important; height: 120px !important;
+    aspect-ratio: auto;
   }
-  #stage.big-3d #cam-box, #stage.big-3d #vid-box { border-radius: 8px; }
-  #stage.big-3d #scene-panel { grid-column: 1/-1; grid-row: 1/-1; }
+
+  /* ============ "SPLIT VIEW" mode: real side-by-side / stacked panels ============ */
+  #stage.split-view {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: 32% 68%;
+  }
+  @media (orientation: landscape) {
+    #stage.split-view {
+      grid-template-columns: 36% 64%;
+      grid-template-rows: 1fr;
+    }
+  }
+  #stage.split-view #cam-panel {
+    position: relative;
+    top: auto; left: auto;
+    width: 100% !important; max-width: none !important; height: 100% !important;
+    aspect-ratio: auto;
+    border-radius: 0;
+    box-shadow: none;
+    border: none;
+    border-right: 1px solid var(--border);
+    z-index: auto;
+  }
+  @media (orientation: portrait) {
+    #stage.split-view #cam-panel {
+      border-right: none; border-bottom: 1px solid var(--border);
+    }
+  }
 
   /* ============ Big-3D toggle button (lives in scene-panel) ============ */
   #scene-toolbar {
@@ -549,7 +576,8 @@
         <canvas id="three"></canvas>
 
         <div id="scene-toolbar">
-          <button id="btn-big3d" title="Shrink camera to corner thumbnail">Big 3D</button>
+          <button id="btn-split"  title="Side-by-side webcam + 3D panels">Split</button>
+          <button id="btn-big3d"  title="Shrink camera corner thumb to ~160px">Big 3D</button>
         </div>
 
         <div id="rec-badge"><span>REC</span></div>
@@ -2012,18 +2040,33 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /* =============================================================
-   BIG 3D TOGGLE — camera shrinks to thumbnail, 3D scene fills stage
+   LAYOUT TOGGLES
+   Default: 3D fills stage, camera = corner overlay.
+   "Split"  : side-by-side / stacked panel mode.
+   "Big 3D" : shrink corner overlay to a tiny thumb (for QC of the character).
+   The two toggles are mutually exclusive.
 ============================================================= */
+function toggleSplitView(){
+  const s = $("stage");
+  s.classList.toggle("split-view");
+  if (s.classList.contains("split-view")) s.classList.remove("big-3d");
+  const on = s.classList.contains("split-view");
+  $("btn-split").classList.toggle("active", on);
+  $("btn-big3d").classList.remove("active");
+  setTimeout(onResize, 60);
+  toast(on ? "Split view — camera + 3D side-by-side." : "Camera back to corner overlay.", "");
+}
 function toggleBig3D(){
   const s = $("stage");
   s.classList.toggle("big-3d");
+  if (s.classList.contains("big-3d")) s.classList.remove("split-view");
   const on = s.classList.contains("big-3d");
-  $("btn-big3d").textContent = on ? "Split view" : "Big 3D";
   $("btn-big3d").classList.toggle("active", on);
-  // give CSS a frame to apply, then resize the renderer
+  $("btn-split").classList.remove("active");
   setTimeout(onResize, 60);
-  toast(on ? "Big 3D — camera shrunk." : "Split view restored.", "");
+  toast(on ? "Big 3D — camera shrunk to small thumb." : "Camera corner overlay restored.", "");
 }
+$("btn-split").addEventListener("click", toggleSplitView);
 $("btn-big3d").addEventListener("click", toggleBig3D);
 
 /* =============================================================
