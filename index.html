@@ -2758,6 +2758,7 @@ const STICK = {
   lastPose3D: null,         // last poseWorldLandmarks
   characterHipWorld: new THREE.Vector3(),
 };
+window.STICK = STICK;  // expose so 3D popout window can reach STICK.group via window.opener.STICK
 
 function makeLabelSprite(text, color) {
   const c = document.createElement("canvas");
@@ -3315,8 +3316,8 @@ function openPopoutCamera() {
   // If running inside a 3D popout window, hijack the OPENER's APP/STICK so
   // sliders mutate the main scene that's actually being rendered here.
   const isPopout = (new URLSearchParams(location.search)).get("mode") === "popout";
-  function getAPP()   { return (isPopout && window.opener && window.opener.APP)   ? window.opener.APP   : window.APP; }
-  function getSTICK() { return (isPopout && window.opener && window.opener.STICK) ? window.opener.STICK : window.STICK; }
+  function getAPP()   { return (isPopout && window.opener && window.opener.APP)   ? window.opener.APP   : (window.APP   || (typeof APP   !== "undefined" ? APP   : null)); }
+  function getSTICK() { return (isPopout && window.opener && window.opener.STICK) ? window.opener.STICK : (window.STICK || (typeof STICK !== "undefined" ? STICK : null)); }
 
   // --- UK1 root rotation sliders ---
   const rotXEl = $$("dbg-rotX"), rotYEl = $$("dbg-rotY"), rotZEl = $$("dbg-rotZ");
