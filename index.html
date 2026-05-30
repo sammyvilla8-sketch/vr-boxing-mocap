@@ -2,6 +2,24 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<script>
+  // Redirect phones and tablets to the touch-optimized ipad.html version.
+  // Detect by user agent (covers iOS Safari, iOS Chrome, Android Chrome) and
+  // viewport width. Escape hatch: append ?desktop=1 to force the desktop view.
+  (function() {
+    try {
+      var ua = navigator.userAgent || '';
+      var isMobileUA = /iPhone|iPad|iPod|Android|Mobile|Silk|Tablet/i.test(ua);
+      var isNarrow   = window.innerWidth < 900;
+      var alreadyRedirected = location.search.indexOf('desktop=1') !== -1;
+      var alreadyOnIpad     = /ipad\.html$/i.test(location.pathname);
+      if ((isMobileUA || isNarrow) && !alreadyRedirected && !alreadyOnIpad) {
+        var target = location.href.replace(/[^\/]*$/, 'ipad.html');
+        location.replace(target + location.search);
+      }
+    } catch (e) { /* swallow — never block desktop on a redirect error */ }
+  })();
+</script>
 <title>VR Boxing Browser Mocap (CC5 Retarget + QC)</title>
 <style>
   :root {
@@ -866,46 +884,113 @@ function frameCharacter() {
 }
 window.frameCharacter = frameCharacter;
 
+/* Measure character height from skeleton (head bone world Y minus foot bone
+   world Y). This is the ONLY accurate measurement for a SkinnedMesh: Box3
+   measurements off geometry.boundingBox give the bind-pose vertex bounds in
+   mesh-local space, which on CC5 / Reallusion rigs are NOT what's actually
+   rendered (the bones apply additional Armature-scale + inverse-bind-matrix
+   transforms at skinning time). Returns null if head/foot bones can't be
+   located — caller falls back to mesh-bounds. */
+function measureCharacterHeightFromSkeleton(root) {
+  root.updateMatrixWorld(true);
+  let headBone = null, leftFootBone = null, rightFootBone = null;
+  const boneNames = [];
+  root.traverse(obj => {
+    if (!obj.isBone && obj.type !== "Bone") return;
+    boneNames.push(obj.name);
+    const n = obj.name.toLowerCase();
+    // Prefer CC5 canonical names but accept other rigs too
+    if (!headBone && /(^|_)head($|_)/.test(n) && !n.includes("headtop") && !n.includes("head_") && !n.includes("topend")) {
+      // Match _Head exactly (CC_Base_Head) over Head_End / HeadTop_End
+      if (n.endsWith("head") || n.endsWith("_head")) headBone = obj;
+    }
+    if (!headBone && (n.endsWith("head") || n === "head" || n.includes("base_head"))) headBone = obj;
+    if (!leftFootBone  && (n.includes("l_foot") || n.includes("leftfoot") || n.includes("lfoot") || /(^|_)left.?foot/.test(n))) leftFootBone  = obj;
+    if (!rightFootBone && (n.includes("r_foot") || n.includes("rightfoot") || n.includes("rfoot") || /(^|_)right.?foot/.test(n))) rightFootBone = obj;
+  });
+  console.log("[uk1] skeleton bone names (" + boneNames.length + " total):", boneNames);
+  console.log("[uk1] picked head:", headBone && headBone.name,
+              " leftFoot:", leftFootBone && leftFootBone.name,
+              " rightFoot:", rightFootBone && rightFootBone.name);
+
+  if (!headBone || (!leftFootBone && !rightFootBone)) {
+    console.warn("[uk1] could not find head/foot bones — will fall back to mesh bounds");
+    return null;
+  }
+  const headPos = new THREE.Vector3();
+  const lfPos   = new THREE.Vector3();
+  const rfPos   = new THREE.Vector3();
+  headBone.getWorldPosition(headPos);
+  if (leftFootBone)  leftFootBone.getWorldPosition(lfPos);
+  if (rightFootBone) rightFootBone.getWorldPosition(rfPos);
+  // Use whichever foot is lower (further from head) so a single twisted foot
+  // doesn't undercount height.
+  const footY = (leftFootBone && rightFootBone) ? Math.min(lfPos.y, rfPos.y)
+              : (leftFootBone ? lfPos.y : rfPos.y);
+  // Head bone sits near the base of the skull; real top-of-head is ~head-bone
+  // height + ~13cm of skull. Add that so we target standing height to crown,
+  // not eye-line.
+  const SKULL_CAP_M = 0.13;
+  const height = Math.abs(headPos.y - footY) + SKULL_CAP_M;
+  console.log("[uk1] skeleton-measured height:", height.toFixed(4),
+              "headY:", headPos.y.toFixed(4), "footY:", footY.toFixed(4),
+              "(+", SKULL_CAP_M, "m skull cap)");
+  return height;
+}
+
 function onModelLoaded(gltf, slot) {
   const root = gltf.scene;
 
   // 1. Force matrices to be up-to-date so bounds reflect actual world positions
   root.updateMatrixWorld(true);
 
-  // 2. Measure with BOTH methods so we can diagnose any mismatch.
-  //    `Box3.setFromObject(root, true)` (precise mode) iterates every vertex
-  //    through matrixWorld — this reflects the true bind-pose rendered size
-  //    of the GLB, even for SkinnedMeshes where GLTFLoader's handling of an
-  //    Armature scale can produce surprises.
+  // 2. PRIMARY measurement: skeleton-based (head bone Y - foot bone Y).
+  //    This is the only way to get the real rendered character height for a
+  //    SkinnedMesh. Box3.setFromObject reads bind-pose vertices in mesh-local
+  //    space, which for CC5 / Reallusion rigs is wildly off the actually-
+  //    rendered size because the bone hierarchy applies Armature scale +
+  //    inverse-bind-matrix transforms at skin time. The mesh bounds will
+  //    report ~1.77m while the rendered character is ~5-10x bigger.
+  const skelHeight = measureCharacterHeightFromSkeleton(root);
+
+  // Also collect mesh-based bounds for diagnostics + as a fallback.
   const preciseBox = new THREE.Box3().setFromObject(root, true);
   const preciseSize = preciseBox.getSize(new THREE.Vector3());
   const mbox = getCharacterBounds(root);
   const msize = mbox.getSize(new THREE.Vector3());
-  console.log("[uk1] dimensions (precise):", preciseSize, "height:", preciseSize.y);
-  console.log("[uk1] dimensions (mesh-bb):", msize,       "height:", msize.y);
+  console.log("[uk1] dimensions (precise box):", preciseSize, "height:", preciseSize.y);
+  console.log("[uk1] dimensions (mesh-bb):", msize, "height:", msize.y);
 
-  // 3. UNCONDITIONAL fit-to-target. The previous conditional check
-  //    (only scale when height < 0.5 or > 3.0) let UK1 through at its native
-  //    bind-pose bounds (~1.7m) while the actually-rendered SkinnedMesh
-  //    was ~100x bigger due to Armature scale handling — leaving the
-  //    character so big it clipped the frustum. Just always normalize.
+  // 3. UNCONDITIONAL fit-to-target. Prefer the skeleton measurement; only
+  //    fall back to mesh bounds if skeleton lookup failed.
   const TARGET_HEIGHT = 1.75;
   let scaleFactor = 1;
-  // Prefer the larger of the two height measurements: it's the worst-case
-  // bound and avoids leaving the character oversized when one source under-
-  // reports.
-  const measuredHeight = Math.max(preciseSize.y || 0, msize.y || 0);
+  let measuredHeight = 0;
+  let measurementSource = "none";
+  if (skelHeight && isFinite(skelHeight) && skelHeight > 0.01) {
+    measuredHeight = skelHeight;
+    measurementSource = "skeleton";
+  } else {
+    // Fallback: max of the two mesh-based measurements
+    measuredHeight = Math.max(preciseSize.y || 0, msize.y || 0);
+    measurementSource = "mesh-bounds";
+  }
   if (isFinite(measuredHeight) && measuredHeight > 1e-4) {
     scaleFactor = TARGET_HEIGHT / measuredHeight;
     root.scale.multiplyScalar(scaleFactor);
     root.updateMatrixWorld(true);
   }
   console.log("[uk1] applied scale factor:", scaleFactor.toFixed(6),
-              "(target height", TARGET_HEIGHT, "m)");
+              "from", measurementSource, "measurement",
+              "(target height", TARGET_HEIGHT, "m, measured", measuredHeight.toFixed(4), "m)");
+
+  // 4. Drop to floor (Y=0). Recompute the box from the now-scaled root, but
+  //    use mesh-precise bounds because we want the lowest visible vertex on
+  //    the floor, not the foot-bone position. Even on a bone-misreporting
+  //    SkinnedMesh, AFTER scaling by skeleton ratio the mesh bounds box is
+  //    also in proportion and the floor-snap will be visually correct.
   const box = new THREE.Box3().setFromObject(root, true);
   const newSz = box.getSize(new THREE.Vector3());
-
-  // 4. Drop to floor (Y=0) using the recomputed bounds
   root.position.y -= box.min.y;
   root.updateMatrixWorld(true);
   const finalBox = new THREE.Box3().setFromObject(root, true);
