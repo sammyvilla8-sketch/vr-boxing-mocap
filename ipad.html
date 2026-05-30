@@ -547,7 +547,7 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/exporters/GLTFExporter.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/holistic.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/kalidokit@1.1.5/dist/kalidokit.umd.js"></script>
 
 <div id="app">
@@ -1443,7 +1443,7 @@ function buildSkeletonHelper(root){
 function initHolistic(){
   if (APP.holistic) return APP.holistic;
   APP.holistic = new Holistic({
-    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}`,
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/${f}`,
   });
   // model complexity 1 is acceptable on mobile; 0 is faster but jittery
   APP.holistic.setOptions({
@@ -1726,6 +1726,21 @@ function onHolisticResults(res){
         ctx.arc(lm.x*overlay.width, lm.y*overlay.height, 3, 0, Math.PI*2);
         ctx.fill();
       }
+    }
+  }
+
+  // 2D->pseudo-world fallback for MediaPipe versions that don't emit poseWorldLandmarks
+  if (res.poseLandmarks && !res.poseWorldLandmarks){
+    const H = 1.75;
+    res.poseWorldLandmarks = res.poseLandmarks.map(lm => ({
+      x: (lm.x - 0.5) * H,
+      y: (lm.y - 0.5) * H,
+      z: (lm.z || 0) * H,
+      visibility: lm.visibility,
+    }));
+    if (!APP._warnedNoWorldLm){
+      console.warn("[mocap] MediaPipe not emitting poseWorldLandmarks; using 2D-derived fallback.");
+      APP._warnedNoWorldLm = true;
     }
   }
 

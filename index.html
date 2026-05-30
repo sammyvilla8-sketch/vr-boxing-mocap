@@ -227,7 +227,7 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/exporters/GLTFExporter.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/holistic.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/kalidokit@1.1.5/dist/kalidokit.umd.js"></script>
 
 <div id="app">
@@ -1200,7 +1200,7 @@ $("btn-tpose-character").addEventListener("click", () => {
 function initHolistic() {
   if (APP.holistic) return APP.holistic;
   APP.holistic = new Holistic({
-    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}`,
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/${f}`,
   });
   APP.holistic.setOptions({
     modelComplexity: 1,
@@ -1546,6 +1546,26 @@ function onHolisticResults(res) {
         ctx.arc(lm.x * overlay.width, lm.y * overlay.height, 2, 0, Math.PI*2);
         ctx.fill();
       }
+    }
+  }
+
+  // If MediaPipe didn't emit poseWorldLandmarks (some Holistic versions skip
+  // this on certain webcam configs), synthesize a usable world-landmark array
+  // from the 2D poseLandmarks so the downstream pipeline still runs. The 2D
+  // landmarks are in normalized image coords (x,y in 0..1, z in image-pixel
+  // depth relative to hips). We map them to ~metric scale: center on image
+  // midpoint, scale x/y so a full-frame body is ~1.75m tall, leave z as-is.
+  if (res.poseLandmarks && !res.poseWorldLandmarks) {
+    const APPROX_BODY_HEIGHT_M = 1.75;
+    res.poseWorldLandmarks = res.poseLandmarks.map(lm => ({
+      x: (lm.x - 0.5) * APPROX_BODY_HEIGHT_M,
+      y: (lm.y - 0.5) * APPROX_BODY_HEIGHT_M,
+      z: (lm.z || 0) * APPROX_BODY_HEIGHT_M,
+      visibility: lm.visibility,
+    }));
+    if (!APP._warnedNoWorldLm) {
+      console.warn("[mocap] MediaPipe not emitting poseWorldLandmarks; using 2D-derived fallback.");
+      APP._warnedNoWorldLm = true;
     }
   }
 
