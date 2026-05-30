@@ -1095,36 +1095,39 @@ function isLocalLikeOrigin(){
          location.hostname === "127.0.0.1";
 }
 
-async function loadUK1FromReleaseOrCache(){
+async function loadUK1FromReleaseOrCache() {
   $("model-info").textContent = "Loading UK1...";
 
-  // Local sidecar GLB wins when running offline
-  if (isLocalLikeOrigin()){
-    try {
-      const head = await fetch("./uk1_outboxer.glb", { method: "HEAD" });
-      if (head.ok){
-        console.log("[uk1] using local ./uk1_outboxer.glb");
-        return "./uk1_outboxer.glb";
-      }
-    } catch(e){ /* fall through */ }
-  }
-
+  // 1. IndexedDB cache: instant on every visit after the first
   const cached = await getCachedBlob(UK1_CACHE_KEY);
-  if (cached){
+  if (cached) {
     console.log("[uk1] loaded from IndexedDB cache:", (cached.size/1024/1024).toFixed(1), "MB");
     toast("UK1 loaded from cache.", "success");
     return URL.createObjectURL(cached);
   }
 
-  console.log("[uk1] downloading from release:", UK1_URL);
-  showUK1Progress("Connecting to GitHub...", 0);
-  const blob = await downloadWithProgress(UK1_URL, (received, total) => {
+  // 2. file:// origin can't reliably fetch + read back, so just hand the
+  //    relative URL straight to GLTFLoader (it handles file:// via XHR).
+  if (location.protocol === "file:") {
+    console.log("[uk1] file:// origin — passing local path to GLTFLoader");
+    return "./uk1_outboxer.glb";
+  }
+
+  // 3. HTTP(S): stream-download the same-origin GLB with a progress bar,
+  //    then cache the blob in IndexedDB. The GLB ships in the repo, so it
+  //    is served by GitHub Pages from the same origin — no CORS issue.
+  //    (Earlier attempts pointed at the v1 release asset, but GitHub Release
+  //    URLs don't send Access-Control-Allow-Origin, so the fetch is blocked
+  //    by the browser.)
+  console.log("[uk1] downloading ./uk1_outboxer.glb (same-origin)");
+  showUK1Progress("Downloading UK1 character...", 0);
+  const blob = await downloadWithProgress("./uk1_outboxer.glb", (received, total) => {
     const mb  = (received/1024/1024).toFixed(1);
     const tot = total ? (total/1024/1024).toFixed(1) : "?";
     const pct = total ? (received/total*100) : 0;
-    showUK1Progress(mb + " MB / " + tot + " MB", pct);
+    showUK1Progress(`Downloading UK1: ${mb} MB / ${tot} MB`, pct);
   });
-  showUK1Progress("Caching on this device...", 100);
+  showUK1Progress("Caching for next time...", 100);
   await cacheBlob(UK1_CACHE_KEY, blob);
   showUK1Progress(null);
   return URL.createObjectURL(blob);

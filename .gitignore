@@ -2,11 +2,12 @@
 # VR Boxing Mocap — git ignores
 # =====================================================
 
-# The UK1 character GLB is ~478 MB, far over GitHub's 100 MB hard limit.
-# Host it as a GitHub Release asset (up to 2 GB per file, unlimited bandwidth)
-# instead of committing it. The ipad.html "Load UK1" button will try
-# ./uk1_outboxer.glb first (works locally), then fall back gracefully.
-uk1_outboxer.glb
+# UK1 character GLB: after Draco compression the file is ~67 MB (well under
+# GitHub's 100 MB hard limit). Committed to the repo so GitHub Pages serves
+# it from the same origin as index.html / ipad.html — avoids the CORS issue
+# that release-asset URLs hit when fetched from JS on the Pages site.
+# (Original FBX is ~478 MB and stays outside the repo.)
+# uk1_outboxer.glb  -- intentionally NOT ignored
 
 # Conversion artifacts (large, regenerable)
 _convert_uk1.log

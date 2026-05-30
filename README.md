@@ -23,27 +23,25 @@ MediaPipe+ARP / MediaPipe-v2 pipeline failures. The point of this tool is
 hot-reload of bone-correction Eulers via on-screen sliders and the
 DevTools console.
 
-## UK1 character: hosted via GitHub Release + IndexedDB cache
+## UK1 character: served from the repo + cached in IndexedDB
 
-`uk1_outboxer.glb` is `.gitignore`d out of the repo (originally ~478 MB
-before Draco compression, now ~67 MB — still big enough that it would
-bloat clones and push against Pages bandwidth quotas). Instead, it's
-hosted as the `v1` GitHub Release asset:
+`uk1_outboxer.glb` (~67 MB after Draco compression — well under GitHub's
+100 MB file limit) is committed to the repo and served by GitHub Pages
+from the same origin as `index.html` / `ipad.html`. This avoids the
+CORS issue that GitHub Release assets hit: release URLs don't send
+`Access-Control-Allow-Origin`, so `fetch()` from the Pages site is
+blocked even though the file is publicly downloadable in a browser tab.
 
-```
-https://github.com/sammyvilla8-sketch/vr-boxing-mocap/releases/download/v1/uk1_outboxer.glb
-```
+On first load both HTMLs stream-download `./uk1_outboxer.glb` and stash
+the blob in **IndexedDB** under the key `uk1_glb_v1` (database
+`vr_boxing_mocap_cache`). Subsequent visits on the same device hit the
+cache and load instantly. The download UI shows percent + MB / MB
+during the one-time fetch with the message "First-time download.
+Cached after this — stays available offline."
 
-Both HTMLs auto-fetch from that URL on first load and stash the blob in
-**IndexedDB** under the key `uk1_glb_v1` (database
-`vr_boxing_mocap_cache`). After the first visit on a device, subsequent
-loads are instant — no network, no progress bar. The download UI shows
-percent + MB-of-MB while the fetch is in flight, with the message
-"First-time download. Cached after this — stays available offline."
-
-Override: if the page is served from `file://` or `localhost`, the tool
-prefers `./uk1_outboxer.glb` sitting next to the HTML (so the Desktop
-launcher keeps working instantly without network).
+The desktop launcher (`file://`) hands the local path directly to
+`GLTFLoader` rather than going through `fetch()` — works instantly with
+no network, same as before.
 
 Clear the cache from the **Clear UK1 cache** button in the Model panel
 (desktop) or Character card (iPad), or from the console:
@@ -356,11 +354,11 @@ to confirm the animation survived serialisation.
 - `PRESET_CC5_DEFAULTS.json` - starting bone correction values for CC5
 - `uk1_outboxer.glb` - pre-converted UK1 character (~67 MB, Draco-
   compressed, textures stripped, hair/eyelashes/stubble removed,
-  body/eyes/teeth/shorts decimated for browser speed). On a local
-  launch (file:// or localhost) the tool auto-loads this file from the
-  same folder. On the hosted Pages build, the file is fetched from the
-  GitHub Release (see "UK1 character: hosted via GitHub Release"). The
-  GLB itself is .gitignored so the repo stays small.
+  body/eyes/teeth/shorts decimated for browser speed). Committed to
+  the repo so GitHub Pages serves it same-origin. On `file://` the
+  tool hands the local path directly to `GLTFLoader`; on Pages it's
+  streamed via `fetch()` with progress UI and cached in IndexedDB
+  after the first load.
 - `LAUNCH_MOCAP.bat` - source for the Desktop one-click launcher.
 - `_convert_uk1.bat` + `_convert_uk1.py` - the Blender headless
   conversion (FBX -> compact GLB). Rerun if the source FBX changes.
