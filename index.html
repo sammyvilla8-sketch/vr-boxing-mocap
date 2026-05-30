@@ -497,7 +497,7 @@
 const APP = {
   scene: null, camera: null, renderer: null, controls: null,
   clock: new THREE.Clock(),
-  skeletonHelper: null, showSkeleton: true, showAxes: true,
+  skeletonHelper: null, showSkeleton: false, showAxes: true,  // S key toggles UK1 rig debug lines
   axesHelpers: [],
   charRoot: null, charMixer: null,
   charBones: {},        // logical name -> THREE.Bone
@@ -1584,12 +1584,12 @@ function onHolisticResults(res) {
     const hipZ = (lh && rh) ? ((lh.z||0) + (rh.z||0)) * 0.5 : 0;
     res.poseWorldLandmarks = res.poseLandmarks.map(lm => ({
       x: (lm.x - hipX) * H,
-      y: -(lm.y - hipY) * H,   // negate: image-down -> world-up
+      y: (lm.y - hipY) * H,    // keep MediaPipe image-down convention (lmToLocal + Kalidokit both expect this)
       z: ((lm.z||0) - hipZ) * H,
       visibility: lm.visibility,
     }));
     if (!APP._warnedNoWorldLm) {
-      console.warn("[mocap] MediaPipe not emitting poseWorldLandmarks; using 2D-derived fallback (hip-centered, Y-up).");
+      console.warn("[mocap] MediaPipe not emitting poseWorldLandmarks; using 2D-derived fallback (hip-centered).");
       APP._warnedNoWorldLm = true;
     }
   }
@@ -1745,7 +1745,7 @@ function driveCharacterFromPose(pose) {
           const v = (lms[idx] && lms[idx].visibility) || 0;
           if (v > maxVis) maxVis = v;
         }
-        if (maxVis < 0.5) {
+        if (maxVis < 0.75) {
           const restQ_skip = APP.charBoneRestQuats[logical];
           if (restQ_skip) bone.quaternion.copy(restQ_skip);
           continue;
