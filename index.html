@@ -780,37 +780,56 @@ $("file-model").addEventListener("change", async e => {
   });
 });
 
-/* Robust character bounds: skinned-mesh Box3.setFromObject is unreliable
-   until matrices have been updated and skinning has run, so we walk the
-   bones (whose world positions ARE accurate after one updateMatrixWorld)
-   to get a sane height. */
+/* Robust bounds for the character. Uses each Mesh's geometry.boundingBox
+   (which is the BIND POSE box for SkinnedMesh — accurate for a T-pose
+   character), transformed by the mesh's matrixWorld. Falls back to bone
+   world positions if no mesh geometry is available.
+   This avoids two known pitfalls:
+   1. Box3.setFromObject on a SkinnedMesh whose matrixWorld is stale gives
+      the local-space (untransformed) box, missing parent scale.
+   2. Bone-based bounds can be degenerate on rigs where all bones share
+      a single rest position with skinning info baked into the inverse-
+      bind matrices. */
 function getCharacterBounds(root) {
   root.updateMatrixWorld(true);
   const box = new THREE.Box3();
-  const tmp = new THREE.Vector3();
-  let bones = 0;
+  const meshes = [];
+  const bones = [];
   root.traverse(o => {
-    if (o.isBone || o.type === "Bone") {
-      o.getWorldPosition(tmp);
-      if (bones === 0) box.set(tmp.clone(), tmp.clone());
-      else box.expandByPoint(tmp);
-      bones++;
-    } else if (o.isMesh && !o.isSkinnedMesh && o.geometry) {
-      const mb = new THREE.Box3().setFromObject(o);
-      if (mb.isEmpty() === false) {
-        if (bones === 0 && box.isEmpty()) box.copy(mb); else box.union(mb);
-      }
-    }
+    if (o.isMesh && o.geometry) meshes.push(o);
+    if (o.isBone || o.type === "Bone") bones.push(o);
   });
-  // Fallback to standard Box3 if we got nothing
+
+  // Primary: union of each mesh's geometry.boundingBox transformed by world
+  for (const m of meshes) {
+    if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+    const bb = m.geometry.boundingBox;
+    if (!bb) continue;
+    const mb = bb.clone().applyMatrix4(m.matrixWorld);
+    if (mb.isEmpty()) continue;
+    if (box.isEmpty()) box.copy(mb); else box.union(mb);
+  }
+
+  // Fallback 1: bone world positions
+  if (box.isEmpty() && bones.length) {
+    const tmp = new THREE.Vector3();
+    for (const b of bones) {
+      b.getWorldPosition(tmp);
+      if (box.isEmpty()) box.set(tmp.clone(), tmp.clone());
+      else box.expandByPoint(tmp);
+    }
+  }
+
+  // Fallback 2: vanilla setFromObject
   if (box.isEmpty()) box.setFromObject(root);
+
   return box;
 }
 
 /* Frame the OrbitControls camera so the character is fully visible.
    Sets target to character center and pulls the camera back along the
    current view direction by a distance derived from FOV + character height.
-   Also clamps minDistance / maxDistance so the user can rotate freely without
+   Clamps minDistance / maxDistance so the user can rotate freely without
    accidentally zooming into the foot or out into oblivion. */
 function frameCharacter() {
   if (!APP.charRoot || !APP.camera || !APP.controls) return;
@@ -818,10 +837,14 @@ function frameCharacter() {
   const sz = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
   const height = Math.max(sz.y, 0.001);
+  const radius = Math.max(sz.x, sz.y, sz.z, 0.001) * 0.5;
 
   // distance that frames the character vertically with ~40% headroom
   const fov = APP.camera.fov * Math.PI / 180;
-  const distance = (height * 0.6) / Math.tan(fov / 2);
+  const aspect = APP.camera.aspect || 1;
+  const distV = (height * 0.6) / Math.tan(fov / 2);
+  const distH = (sz.x * 0.6) / (Math.tan(fov / 2) * aspect);
+  const distance = Math.max(distV, distH) * 1.1;
 
   // Preserve roughly the current view direction so a manual orbit isn't reset
   const view = new THREE.Vector3();
@@ -833,15 +856,13 @@ function frameCharacter() {
   APP.camera.position.copy(center).addScaledVector(view, distance);
 
   // Allow rotate + zoom but bound it so user can't lose the character
-  APP.controls.minDistance = height * 0.25;
-  APP.controls.maxDistance = height * 12;
-
-  // Update near/far for the new scale
-  APP.camera.near = Math.max(0.01, height * 0.01);
-  APP.camera.far  = height * 200;
+  APP.controls.minDistance = Math.max(0.05, radius * 0.4);
+  APP.controls.maxDistance = Math.max(2,   radius * 20);
+  APP.camera.near = Math.max(0.01, height * 0.005);
+  APP.camera.far  = Math.max(50,   height * 500);
   APP.camera.updateProjectionMatrix();
   APP.controls.update();
-  console.log(`[frame] character height ${height.toFixed(2)}m, camera @ ${distance.toFixed(2)}m`);
+  console.log(`[frame] bounds size=(${sz.x.toFixed(2)}, ${sz.y.toFixed(2)}, ${sz.z.toFixed(2)})m, center=(${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}), cam@${distance.toFixed(2)}m, target=${APP.controls.target.toArray().map(v=>v.toFixed(2))}`);
 }
 window.frameCharacter = frameCharacter;
 
@@ -851,24 +872,45 @@ function onModelLoaded(gltf, slot) {
   // 1. Force matrices to be up-to-date so bounds reflect actual world positions
   root.updateMatrixWorld(true);
 
-  // 2. Get the REAL bounds (bone-based, robust to skinned-mesh quirks)
-  const box = getCharacterBounds(root);
-  const sz = box.getSize(new THREE.Vector3());
+  // 2. Measure with BOTH methods so we can diagnose any mismatch.
+  //    `Box3.setFromObject(root, true)` (precise mode) iterates every vertex
+  //    through matrixWorld — this reflects the true bind-pose rendered size
+  //    of the GLB, even for SkinnedMeshes where GLTFLoader's handling of an
+  //    Armature scale can produce surprises.
+  const preciseBox = new THREE.Box3().setFromObject(root, true);
+  const preciseSize = preciseBox.getSize(new THREE.Vector3());
+  const mbox = getCharacterBounds(root);
+  const msize = mbox.getSize(new THREE.Vector3());
+  console.log("[uk1] dimensions (precise):", preciseSize, "height:", preciseSize.y);
+  console.log("[uk1] dimensions (mesh-bb):", msize,       "height:", msize.y);
 
-  // 3. Auto-scale toward ~1.8m if the GLB came in at an unreasonable scale.
-  //    Guard the divide so a near-zero height (skeleton not unfolded yet)
-  //    doesn't multiply by infinity and explode the character.
-  if (isFinite(sz.y) && sz.y > 0.02 && (sz.y < 0.5 || sz.y > 3.0)) {
-    const s = 1.8 / sz.y;
-    root.scale.multiplyScalar(s);
+  // 3. UNCONDITIONAL fit-to-target. The previous conditional check
+  //    (only scale when height < 0.5 or > 3.0) let UK1 through at its native
+  //    bind-pose bounds (~1.7m) while the actually-rendered SkinnedMesh
+  //    was ~100x bigger due to Armature scale handling — leaving the
+  //    character so big it clipped the frustum. Just always normalize.
+  const TARGET_HEIGHT = 1.75;
+  let scaleFactor = 1;
+  // Prefer the larger of the two height measurements: it's the worst-case
+  // bound and avoids leaving the character oversized when one source under-
+  // reports.
+  const measuredHeight = Math.max(preciseSize.y || 0, msize.y || 0);
+  if (isFinite(measuredHeight) && measuredHeight > 1e-4) {
+    scaleFactor = TARGET_HEIGHT / measuredHeight;
+    root.scale.multiplyScalar(scaleFactor);
     root.updateMatrixWorld(true);
-    box.copy(getCharacterBounds(root));
   }
+  console.log("[uk1] applied scale factor:", scaleFactor.toFixed(6),
+              "(target height", TARGET_HEIGHT, "m)");
+  const box = new THREE.Box3().setFromObject(root, true);
   const newSz = box.getSize(new THREE.Vector3());
 
   // 4. Drop to floor (Y=0) using the recomputed bounds
   root.position.y -= box.min.y;
   root.updateMatrixWorld(true);
+  const finalBox = new THREE.Box3().setFromObject(root, true);
+  console.log("[uk1] post-fit dimensions:", finalBox.getSize(new THREE.Vector3()),
+              "feet@y=", finalBox.min.y.toFixed(4), "head@y=", finalBox.max.y.toFixed(4));
 
   if (slot === "character") {
     if (APP.charRoot) APP.scene.remove(APP.charRoot);
@@ -884,8 +926,9 @@ function onModelLoaded(gltf, slot) {
     APP.charMixer = new THREE.AnimationMixer(root);
     $("model-info").innerHTML = `Loaded. Height: ${newSz.y.toFixed(2)}m. Bones: <b>${Object.keys(APP._allBones).length}</b>. Mapped: <b>${Object.keys(APP.charBones).length}/${DRIVEN_BONES.length}</b>`;
 
-    // 5. Frame the camera on the character so it fits the view
-    frameCharacter();
+    // 5. Frame the camera on the character so it fits the view.
+    //    Defer to next animation frame so all matrices are settled.
+    requestAnimationFrame(() => requestAnimationFrame(frameCharacter));
   } else {
     if (APP.reference) APP.scene.remove(APP.reference);
     APP.reference = root;
