@@ -1,0 +1,1791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>VR Boxing Mocap — iPad/Mobile</title>
+<style>
+  :root {
+    --bg: #0c0e12;
+    --panel: #181b21;
+    --panel2: #232830;
+    --fg: #f0f0f0;
+    --muted: #8a93a0;
+    --accent: #4ec9b0;
+    --warn: #ffb84d;
+    --bad: #ff5252;
+    --good: #4ec9b0;
+    --border: #2e333c;
+    --rec: #ff3030;
+    /* tap-target minimum (Apple HIG: 44pt) */
+    --tap: 52px;
+    --tap-lg: 72px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin:0; padding:0;
+    height:100%;
+    background:var(--bg); color:var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size:15px;
+    overflow:hidden;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+  }
+  /* honor iOS safe area */
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  button, label, .btn, .pill { user-select: none; -webkit-user-select: none; }
+
+  /* ============ LAYOUT ============ */
+  #app {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    height: 100vh;
+    height: 100dvh;
+  }
+  /* Single column on portrait phones, two-column on landscape/iPad */
+  #main {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+    min-height: 0;
+    position: relative;
+  }
+  @media (min-aspect-ratio: 1/1) and (min-width: 700px) {
+    /* landscape / iPad */
+    #main {
+      grid-template-columns: 1fr 360px;
+      grid-template-rows: 1fr;
+    }
+    #controls { border-left: 1px solid var(--border); border-top: none; }
+  }
+
+  /* ============ 3D CENTER ============ */
+  #stage {
+    position: relative;
+    background: #050609;
+    min-height: 0;
+    overflow: hidden;
+  }
+  canvas#three {
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none; /* let OrbitControls handle gestures */
+  }
+  /* small camera preview anchored top-left of stage */
+  #cam-box, #vid-box {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 36vw;
+    max-width: 220px;
+    aspect-ratio: 4/3;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #000;
+    overflow: hidden;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  #cam-box video, #vid-box video,
+  #cam-box canvas, #vid-box canvas {
+    width: 100%; height: 100%; object-fit: cover; display:block;
+  }
+  #cam-box canvas, #vid-box canvas {
+    position: absolute; top:0; left:0; pointer-events:none;
+  }
+  #cam-box .label, #vid-box .label {
+    position: absolute; top:4px; left:4px;
+    background: rgba(0,0,0,0.65);
+    padding: 2px 6px; border-radius: 4px;
+    font-size: 11px; z-index: 2;
+  }
+  /* recording pulse on the preview border */
+  #cam-box.rec, #vid-box.rec {
+    border-color: var(--rec);
+    box-shadow: 0 0 0 3px rgba(255,48,48,0.4), 0 4px 12px rgba(0,0,0,0.4);
+    animation: rec-pulse 1s infinite;
+  }
+  @keyframes rec-pulse {
+    0%,100% { box-shadow: 0 0 0 3px rgba(255,48,48,0.4), 0 4px 12px rgba(0,0,0,0.4); }
+    50%     { box-shadow: 0 0 0 6px rgba(255,48,48,0.15), 0 4px 12px rgba(0,0,0,0.4); }
+  }
+
+  /* Big REC indicator overlay on top of stage */
+  #rec-badge {
+    position: absolute;
+    top: 12px; right: 12px;
+    background: var(--rec);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 14px;
+    font-weight: 700;
+    font-size: 14px;
+    z-index: 15;
+    display: none;
+    animation: rec-pulse2 1s infinite;
+  }
+  #rec-badge.visible { display: flex; align-items: center; gap: 6px; }
+  #rec-badge::before {
+    content: ""; width: 10px; height: 10px; border-radius: 50%;
+    background: white;
+  }
+  @keyframes rec-pulse2 {
+    0%,100% { opacity: 1; }
+    50%     { opacity: 0.55; }
+  }
+
+  /* ============ BOTTOM ACTION BAR (always visible) ============ */
+  #action-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--panel2);
+    border-top: 1px solid var(--border);
+    min-height: 88px;
+  }
+  #btn-rec {
+    width: var(--tap-lg);
+    height: var(--tap-lg);
+    border-radius: 50%;
+    background: var(--rec);
+    border: 4px solid #ffe;
+    box-shadow: 0 4px 16px rgba(255,48,48,0.4);
+    color: white;
+    font-weight: 800;
+    font-size: 13px;
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+  #btn-rec:active { transform: scale(0.92); }
+  #btn-rec:disabled { opacity: 0.4; }
+  #btn-rec.recording {
+    /* square the inside to indicate "stop" */
+    background: #4a0000;
+    border-color: var(--rec);
+    animation: rec-pulse2 1s infinite;
+  }
+  #btn-rec.recording::after {
+    content: ""; display: inline-block; width: 24px; height: 24px;
+    background: var(--rec); border-radius: 4px;
+  }
+  #btn-rec.recording { font-size: 0; } /* hide text */
+
+  .action-side {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 4px; min-width: 88px;
+  }
+  .action-side button {
+    width: var(--tap); height: var(--tap);
+    border-radius: 12px;
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .action-side button:active { background: var(--panel2); }
+  .action-side button:disabled { opacity: 0.35; }
+  .action-side button.primary { background: var(--accent); color:#0a0a0a; border-color: var(--accent); }
+  .action-side .lbl {
+    font-size: 11px; color: var(--muted); text-align: center;
+  }
+
+  /* ============ CONTROLS COLUMN ============ */
+  #controls {
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    max-height: 50vh;
+    padding: 10px;
+  }
+  @media (min-aspect-ratio: 1/1) and (min-width: 700px) {
+    #controls { max-height: none; }
+  }
+
+  .card {
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .card-h {
+    padding: 10px 14px;
+    background: #2a3038;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer;
+  }
+  .card-h .arr { font-size: 11px; transition: transform 0.2s; }
+  .card.collapsed .card-b { display: none; }
+  .card.collapsed .card-h .arr { transform: rotate(-90deg); }
+  .card-b { padding: 10px 12px; }
+
+  /* segmented control */
+  .seg {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0e1115;
+  }
+  .seg button {
+    flex: 1;
+    min-height: var(--tap);
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    border-right: 1px solid var(--border);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0 10px;
+  }
+  .seg button:last-child { border-right: none; }
+  .seg button.active {
+    background: var(--accent);
+    color: #0a0a0a;
+  }
+  .seg button:active:not(.active) { background: var(--panel2); }
+
+  /* large primary buttons */
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-row > * { flex: 1; min-width: 100px; }
+  .btn-big {
+    min-height: var(--tap);
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--fg);
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 0 12px;
+    cursor: pointer;
+  }
+  .btn-big:active { background: #2c333c; }
+  .btn-big:disabled { opacity: 0.4; }
+  .btn-big.primary { background: var(--accent); color: #0a0a0a; border-color: var(--accent); }
+  .btn-big.danger  { background: var(--bad); color: white; border-color: var(--bad); }
+  .btn-big.warn    { background: var(--warn); color: #1a1a1a; border-color: var(--warn); }
+
+  .hint { font-size: 12px; color: var(--muted); margin: 6px 0; line-height: 1.4; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+
+  /* takes list */
+  #takes {
+    max-height: 280px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .take {
+    background: #1a1d24;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    padding: 10px;
+  }
+  .take.selected { border-color: var(--accent); background: #1a2227; }
+  .take .take-top {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .take .take-name { font-weight: 600; font-size: 14px; }
+  .take .take-meta { font-size: 11px; color: var(--muted); }
+  .take .take-row { display: flex; gap: 6px; margin-top: 6px; align-items:center; }
+  .take select, .take input[type="text"] {
+    background: #0e1115; color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px;
+    min-height: 36px;
+  }
+  .take input[type="text"] { flex: 1; }
+  .take .take-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .take .take-actions button {
+    flex: 1; min-height: 40px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--panel);
+    color: var(--fg); font-size: 13px; font-weight: 600;
+    cursor: pointer;
+  }
+  .take .take-actions button.share { background: var(--accent); color: #0a0a0a; border-color: var(--accent); }
+  .take .take-actions button.del   { background: #3a1e1e; color: var(--bad); border-color: var(--bad); }
+
+  /* status pills */
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill {
+    background: #0e1115; border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 14px;
+    font-size: 11px; color: var(--muted);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+  .pill .dot.green { background: var(--good); }
+  .pill .dot.yellow { background: var(--warn); }
+  .pill .dot.red   { background: var(--bad); }
+
+  /* file input styled as button */
+  .file-btn {
+    display: inline-flex;
+    align-items: center; justify-content: center;
+    width: 100%;
+    min-height: var(--tap);
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    font-size: 14px; font-weight: 600;
+    cursor: pointer;
+    padding: 0 12px;
+    text-align: center;
+  }
+  .file-btn input[type="file"] {
+    position: absolute; left: -9999px; opacity: 0;
+  }
+  .file-btn:active { background: var(--panel2); }
+
+  /* toast */
+  #toast {
+    position: fixed;
+    top: max(12px, env(safe-area-inset-top));
+    left: 50%; transform: translateX(-50%);
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    max-width: calc(100vw - 24px);
+    text-align: center;
+  }
+  #toast.visible { opacity: 1; }
+  #toast.error   { border-color: var(--bad); color: var(--bad); }
+  #toast.success { border-color: var(--good); color: var(--good); }
+
+  /* permission help modal */
+  #help {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 2000;
+    padding: 16px;
+  }
+  #help.visible { display: flex; }
+  #help .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+    max-width: 460px;
+    width: 100%;
+    color: var(--fg);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  #help h3 { margin: 0 0 8px 0; font-size: 16px; }
+  #help button { margin-top: 14px; }
+
+  /* video scrub for pre-recorded mode */
+  #video-controls input[type="range"] {
+    width: 100%; height: 40px;
+  }
+
+  /* hide desktop-only HUDs */
+  .desktop-only { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- CDN libs (same as desktop) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/loaders/DRACOLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/exporters/GLTFExporter.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/kalidokit@1.1.5/dist/kalidokit.umd.js"></script>
+
+<div id="app">
+
+  <div id="main">
+
+    <!-- 3D stage -->
+    <div id="stage">
+      <canvas id="three"></canvas>
+
+      <!-- camera preview (visible in live mode) -->
+      <div id="cam-box">
+        <span class="label">Camera</span>
+        <video id="cam-video" autoplay playsinline muted></video>
+        <canvas id="cam-overlay"></canvas>
+      </div>
+
+      <!-- video file preview (visible in video mode) -->
+      <div id="vid-box" style="display:none;">
+        <span class="label" id="vid-label">Video</span>
+        <video id="vid-file" playsinline muted></video>
+        <canvas id="vid-overlay"></canvas>
+      </div>
+
+      <div id="rec-badge"><span>REC</span></div>
+    </div>
+
+    <!-- Bottom action bar: always visible, big touch targets -->
+    <div id="action-bar">
+      <div class="action-side">
+        <button id="btn-tpose" title="Calibrate T-pose">T-Pose</button>
+        <div class="lbl">Calibrate</div>
+      </div>
+
+      <button id="btn-rec" disabled>REC</button>
+
+      <div class="action-side">
+        <button id="btn-export-last" disabled>Share</button>
+        <div class="lbl">Export</div>
+      </div>
+    </div>
+
+    <!-- Controls column / drawer -->
+    <div id="controls">
+
+      <!-- Mode selector -->
+      <div class="card">
+        <div class="card-h" data-toggle>
+          <span>Source</span><span class="arr">▼</span>
+        </div>
+        <div class="card-b">
+          <div class="seg" id="mode-seg">
+            <button class="active" data-mode="live">Live Camera</button>
+            <button data-mode="video">Pre-recorded</button>
+          </div>
+          <div class="hint" id="mode-hint">Live camera. Position iPad on tripod, throw combos, tap REC.</div>
+        </div>
+      </div>
+
+      <!-- Live camera controls -->
+      <div class="card" id="card-live">
+        <div class="card-h" data-toggle>
+          <span>Camera</span><span class="arr">▼</span>
+        </div>
+        <div class="card-b">
+          <div class="seg" id="facing-seg">
+            <button data-face="user">Front (selfie)</button>
+            <button class="active" data-face="environment">Back (tripod)</button>
+          </div>
+          <div class="hint">Default: BACK camera so you can prop the iPad on a tripod and watch yourself.</div>
+          <div class="btn-row" style="margin-top:8px;">
+            <button class="btn-big primary" id="btn-cam-start">Start Camera</button>
+            <button class="btn-big" id="btn-cam-stop" disabled>Stop</button>
+          </div>
+          <div class="hint" id="cam-status">Camera not started.</div>
+          <div class="hint" id="tpose-status">Not calibrated yet.</div>
+        </div>
+      </div>
+
+      <!-- Video file controls -->
+      <div class="card" id="card-video" style="display:none;">
+        <div class="card-h" data-toggle>
+          <span>Pre-recorded Video</span><span class="arr">▼</span>
+        </div>
+        <div class="card-b">
+          <label class="file-btn">
+            Pick Video from Photos
+            <input type="file" id="file-video" accept="video/*" />
+          </label>
+          <div class="hint" id="video-info">No video loaded.</div>
+          <div id="video-controls">
+            <div class="btn-row" style="margin-top:8px;">
+              <button class="btn-big primary" id="btn-vid-play" disabled>Play</button>
+              <button class="btn-big" id="btn-vid-pause" disabled>Pause</button>
+            </div>
+            <input type="range" id="vid-scrub" min="0" max="1000" step="1" value="0" disabled />
+            <div class="hint" id="vid-time">0:00 / 0:00</div>
+            <div class="btn-row">
+              <button class="btn-big" id="btn-tpose-vid" disabled>Capture T-Pose (current frame)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Character -->
+      <div class="card">
+        <div class="card-h" data-toggle>
+          <span>Character</span><span class="arr">▼</span>
+        </div>
+        <div class="card-b">
+          <label class="file-btn">
+            Load Character (.glb)
+            <input type="file" id="file-model" accept=".glb,model/gltf-binary" />
+          </label>
+          <div class="btn-row" style="margin-top:8px;">
+            <button class="btn-big" id="btn-load-uk1">Load UK1 (≈478 MB) ⚠ WiFi only</button>
+          </div>
+          <div class="hint" id="model-info">No character loaded. Tap above to pick a GLB, or use stick figure only.</div>
+        </div>
+      </div>
+
+      <!-- Stick figure mode (replaces keys 1/2/3) -->
+      <div class="card">
+        <div class="card-h" data-toggle>
+          <span>Stick Figure View</span><span class="arr">▼</span>
+        </div>
+        <div class="card-b">
+          <div class="seg" id="stick-seg">
+            <button data-stick="1">Side-by-side</button>
+            <button class="active" data-stick="2">Overlap</button>
+            <button data-stick="3">Hidden</button>
+          </div>
+          <div class="hint">Overlap shows raw MediaPipe tracking on top of the retargeted character. Useful for QC.</div>
+        </div>
+      </div>
+
+      <!-- Takes -->
+      <div class="card">
+        <div class="card-h" data-toggle>
+          <span>Takes</span><span class="arr">▼</span>
+        </div>
+        <div class="card-b">
+          <div id="takes"><div class="hint">No takes yet. Tap REC.</div></div>
+        </div>
+      </div>
+
+      <!-- Status pills -->
+      <div class="card collapsed">
+        <div class="card-h" data-toggle>
+          <span>Status</span><span class="arr">▼</span>
+        </div>
+        <div class="card-b">
+          <div class="pills">
+            <span class="pill"><span class="dot" id="pill-track-dot"></span>Tracking: <b id="pill-track">off</b></span>
+            <span class="pill"><span class="dot" id="pill-cal-dot"></span>Cal: <b id="pill-cal">No</b></span>
+            <span class="pill"><span class="dot" id="pill-fps-dot"></span>FPS: <b id="pill-fps">--</b></span>
+            <span class="pill"><span class="dot"></span>Frames: <b id="pill-frames">0</b></span>
+            <span class="pill"><span class="dot"></span>Takes: <b id="pill-takes">0</b></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint" style="text-align:center; padding:8px;">
+        Pipeline: REC → Stop → Share → Save to Drive/iCloud → desktop syncs → drag into Unity.
+      </div>
+    </div>
+
+  </div>
+
+  <div id="toast"></div>
+
+  <!-- Permission help modal -->
+  <div id="help">
+    <div class="modal">
+      <h3 id="help-title">Camera permission needed</h3>
+      <div id="help-body">
+        Tap the <b>AA</b> icon in Safari's address bar (or Chrome's overflow menu) →
+        <b>Website Settings</b> → set <b>Camera</b> to <b>Allow</b>. Then reload this page.
+      </div>
+      <button class="btn-big primary" id="help-close" style="width:100%;">Got it</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+
+/* =============================================================
+   GLOBAL STATE  (parallel to desktop index.html APP)
+============================================================= */
+const APP = {
+  scene: null, camera: null, renderer: null, controls: null,
+  clock: new THREE.Clock(),
+  skeletonHelper: null, showSkeleton: true,
+  charRoot: null, charMixer: null,
+  charBones: {},
+  charBoneRestQuats: {},
+  charBoneRestPos: {},
+  hipRestY: 0,
+  _allBones: {},
+
+  holistic: null, cameraMP: null, stream: null,
+  videoEl: null, camOverlayEl: null,
+  trackingOK: false, lostFrames: 0,
+  lastResults: null,
+
+  // Camera facing mode for mobile (back camera default for tripod use)
+  facingMode: "environment",
+
+  // Source mode: "live" (camera) or "video" (file)
+  mode: "live",
+  // Pre-recorded video
+  videoFile: null, videoFileUrl: null,
+  videoFileEl: null, videoOverlayEl: null,
+  videoRAFId: null, videoIsProcessing: false, videoLastSentTime: -1,
+
+  calibrationBaseline: null,
+  calibrationCapturing: false,
+  calibrationStart: 0,
+  calibrationSamples: [],
+
+  oneEuro: {},
+  oneEuroParams: { minCutoff: 1.2, beta: 0.08, dCutoff: 1.0 },
+
+  recording: false,
+  recStart: 0, recStartVideo: 0,
+  recFrames: [],
+  takes: [],
+  activeTake: null,
+  lastExportedBlob: null,
+  lastExportedName: null,
+
+  fpsAccum: 0, fpsFrames: 0,
+};
+window.APP = APP;
+
+/* CC5 bone map and corrections — copied verbatim from desktop */
+const KALIDO_TO_CC5 = {
+  Hips:          ["CC_Base_Hip"],
+  Spine:         ["CC_Base_Spine01"],
+  Chest:         ["CC_Base_Spine02"],
+  Neck:          ["CC_Base_NeckTwist01", "CC_Base_Neck"],
+  Head:          ["CC_Base_Head"],
+  LeftUpperArm:  ["CC_Base_L_Upperarm", "CC_Base_L_UpperArm"],
+  LeftLowerArm:  ["CC_Base_L_Forearm"],
+  LeftHand:      ["CC_Base_L_Hand"],
+  RightUpperArm: ["CC_Base_R_Upperarm", "CC_Base_R_UpperArm"],
+  RightLowerArm: ["CC_Base_R_Forearm"],
+  RightHand:     ["CC_Base_R_Hand"],
+  LeftUpperLeg:  ["CC_Base_L_Thigh"],
+  LeftLowerLeg:  ["CC_Base_L_Calf"],
+  LeftFoot:      ["CC_Base_L_Foot"],
+  RightUpperLeg: ["CC_Base_R_Thigh"],
+  RightLowerLeg: ["CC_Base_R_Calf"],
+  RightFoot:     ["CC_Base_R_Foot"],
+};
+const DRIVEN_BONES = Object.keys(KALIDO_TO_CC5);
+
+const DEFAULT_BONE_CORRECTIONS = {
+  Hips:{x:0,y:0,z:0}, Spine:{x:0,y:0,z:0}, Chest:{x:0,y:0,z:0},
+  Neck:{x:0,y:0,z:0}, Head:{x:0,y:0,z:0},
+  LeftUpperArm:{x:0,y:0,z:90},  LeftLowerArm:{x:0,y:0,z:90},  LeftHand:{x:0,y:0,z:90},
+  RightUpperArm:{x:0,y:0,z:-90},RightLowerArm:{x:0,y:0,z:-90},RightHand:{x:0,y:0,z:-90},
+  LeftUpperLeg:{x:0,y:0,z:0},  LeftLowerLeg:{x:0,y:0,z:0},  LeftFoot:{x:0,y:0,z:0},
+  RightUpperLeg:{x:0,y:0,z:0}, RightLowerLeg:{x:0,y:0,z:0}, RightFoot:{x:0,y:0,z:0},
+};
+window.boneCorrections = JSON.parse(JSON.stringify(DEFAULT_BONE_CORRECTIONS));
+
+/* One Euro filter — identical to desktop */
+class OneEuro {
+  constructor(minCutoff=1.2, beta=0.08, dCutoff=1.0) {
+    this.minCutoff=minCutoff; this.beta=beta; this.dCutoff=dCutoff;
+    this.xPrev=null; this.dxPrev=0; this.tPrev=null;
+  }
+  _alpha(c,dt){ const r=2*Math.PI*c*dt; return r/(r+1); }
+  filter(x,t){
+    if (this.tPrev==null){ this.xPrev=x; this.tPrev=t; this.dxPrev=0; return x; }
+    const dt=Math.max(1e-6, t-this.tPrev);
+    const dx=(x-this.xPrev)/dt;
+    const aD=this._alpha(this.dCutoff,dt);
+    const dxHat=aD*dx+(1-aD)*this.dxPrev;
+    const cutoff=this.minCutoff+this.beta*Math.abs(dxHat);
+    const a=this._alpha(cutoff,dt);
+    const xHat=a*x+(1-a)*this.xPrev;
+    this.xPrev=xHat; this.dxPrev=dxHat; this.tPrev=t;
+    return xHat;
+  }
+  reset(){ this.xPrev=null; this.tPrev=null; this.dxPrev=0; }
+}
+function getEuroSetForBone(name){
+  if (!APP.oneEuro[name]){
+    const p=APP.oneEuroParams;
+    APP.oneEuro[name]={
+      x:new OneEuro(p.minCutoff,p.beta,p.dCutoff),
+      y:new OneEuro(p.minCutoff,p.beta,p.dCutoff),
+      z:new OneEuro(p.minCutoff,p.beta,p.dCutoff),
+      w:new OneEuro(p.minCutoff,p.beta,p.dCutoff),
+    };
+  }
+  return APP.oneEuro[name];
+}
+function resetAllEuros(){
+  for (const k in APP.oneEuro){
+    const s=APP.oneEuro[k];
+    s.x.reset(); s.y.reset(); s.z.reset(); s.w.reset();
+  }
+}
+
+/* Utilities */
+function $(id){ return document.getElementById(id); }
+function deg(r){ return r*180/Math.PI; }
+function rad(d){ return d*Math.PI/180; }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function eulerToQuat(xDeg,yDeg,zDeg,order){
+  const e=new THREE.Euler(rad(xDeg),rad(yDeg),rad(zDeg),order||"XYZ");
+  return new THREE.Quaternion().setFromEuler(e);
+}
+function toast(msg,type){
+  const el=$("toast");
+  el.textContent=msg;
+  el.className="visible "+(type||"");
+  clearTimeout(toast._t);
+  toast._t=setTimeout(()=>{ el.className=""; }, 2800);
+  console.log("[toast]", msg);
+}
+
+/* =============================================================
+   THREE.JS SETUP
+============================================================= */
+function initThree(){
+  const canvas=$("three");
+  APP.renderer=new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true, powerPreference: "high-performance" });
+  APP.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));  // cap @2x for mobile perf
+  APP.renderer.outputEncoding=THREE.sRGBEncoding;
+
+  APP.scene=new THREE.Scene();
+  APP.scene.background=new THREE.Color(0x101216);
+
+  APP.camera=new THREE.PerspectiveCamera(45, 1, 0.05, 200);
+  APP.camera.position.set(2.0, 1.6, 3.0);
+
+  APP.controls=new THREE.OrbitControls(APP.camera, canvas);
+  APP.controls.target.set(0, 1.0, 0);
+  APP.controls.enableDamping = true;
+  APP.controls.dampingFactor = 0.08;
+  APP.controls.update();
+
+  APP.scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const dir=new THREE.DirectionalLight(0xffffff, 0.85);
+  dir.position.set(2,4,3); APP.scene.add(dir);
+
+  const grid=new THREE.GridHelper(10, 20, 0x404040, 0x303030);
+  APP.scene.add(grid);
+
+  const fmat=new THREE.LineBasicMaterial({ color:0x4ec9b0, transparent:true, opacity:0.5 });
+  const fg=new THREE.BufferGeometry();
+  fg.setFromPoints([
+    new THREE.Vector3(-2,0.001,0), new THREE.Vector3(2,0.001,0),
+    new THREE.Vector3(0,0.001,-2), new THREE.Vector3(0,0.001,2),
+  ]);
+  APP.scene.add(new THREE.LineSegments(fg, fmat));
+
+  window.addEventListener("resize", onResize);
+  // iOS orientation change needs a delayed resize
+  window.addEventListener("orientationchange", () => setTimeout(onResize, 200));
+  onResize();
+  APP.clock.start();
+  animate();
+}
+function onResize(){
+  const c=$("three");
+  const w=c.clientWidth, h=c.clientHeight;
+  if (w === 0 || h === 0) return;
+  APP.renderer.setSize(w,h,false);
+  APP.camera.aspect=w/h;
+  APP.camera.updateProjectionMatrix();
+}
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=APP.clock.getDelta();
+  if (APP.charMixer) APP.charMixer.update(dt);
+  APP.controls.update();
+  APP.renderer.render(APP.scene, APP.camera);
+
+  APP.fpsFrames++; APP.fpsAccum+=dt;
+  if (APP.fpsAccum >= 0.5){
+    const fps=APP.fpsFrames/APP.fpsAccum;
+    $("pill-fps").textContent=fps.toFixed(0);
+    const d=$("pill-fps-dot");
+    d.className="dot "+(fps>30?"green":fps>15?"yellow":"red");
+    APP.fpsAccum=0; APP.fpsFrames=0;
+  }
+}
+
+/* =============================================================
+   MODEL LOADING
+============================================================= */
+function makeGLTFLoader(){
+  const loader=new THREE.GLTFLoader();
+  try {
+    const draco=new THREE.DRACOLoader();
+    draco.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/");
+    loader.setDRACOLoader(draco);
+  } catch(e){ console.warn("DRACOLoader unavailable:", e); }
+  return loader;
+}
+
+function loadGLBFromUrl(url, friendlyName){
+  toast("Loading " + friendlyName + "...", "");
+  $("model-info").textContent = "Loading " + friendlyName + "...";
+  const loader=makeGLTFLoader();
+  loader.load(url, gltf => {
+    onModelLoaded(gltf);
+    toast(friendlyName + " loaded.", "success");
+  }, xhr => {
+    if (xhr.lengthComputable){
+      const pct = Math.round((xhr.loaded/xhr.total)*100);
+      $("model-info").textContent = "Loading " + friendlyName + "... " + pct + "%";
+    }
+  }, err => {
+    toast("Load failed: " + (err.message||err), "error");
+    $("model-info").textContent = "Load failed.";
+    console.error(err);
+  });
+}
+
+$("file-model").addEventListener("change", e => {
+  const f=e.target.files[0];
+  if (!f) return;
+  const url=URL.createObjectURL(f);
+  const loader=makeGLTFLoader();
+  loader.load(url, gltf => {
+    onModelLoaded(gltf);
+    URL.revokeObjectURL(url);
+    toast("Model loaded: " + f.name, "success");
+  }, undefined, err => { toast("Load failed: " + err.message, "error"); console.error(err); });
+});
+
+$("btn-load-uk1").addEventListener("click", () => {
+  if (!confirm("Load UK1 character? File is ~478 MB. Use WiFi.")) return;
+  // Try local first (works when you've placed the GLB next to ipad.html, e.g. desktop sync),
+  // then fall back to GitHub Release URL if user has set one up.
+  fetch("./uk1_outboxer.glb", { method: "HEAD" })
+    .then(res => {
+      if (res.ok) {
+        loadGLBFromUrl("./uk1_outboxer.glb", "UK1 (local)");
+      } else {
+        toast("UK1 not hosted with the app. Use file picker, or set up a GitHub Release.", "error");
+      }
+    })
+    .catch(() => {
+      toast("UK1 not hosted. Use file picker.", "error");
+    });
+});
+
+function onModelLoaded(gltf){
+  const root = gltf.scene;
+
+  // Auto-scale toward ~1.8m
+  const box=new THREE.Box3().setFromObject(root);
+  const sz=box.getSize(new THREE.Vector3());
+  if (sz.y < 0.5 || sz.y > 3.0){
+    const s = 1.8 / Math.max(sz.y, 1e-3);
+    root.scale.multiplyScalar(s);
+    box.setFromObject(root);
+  }
+  const newSz=box.getSize(new THREE.Vector3());
+  root.position.y -= box.min.y;
+
+  if (APP.charRoot) APP.scene.remove(APP.charRoot);
+  APP.charRoot=root;
+  APP.scene.add(root);
+
+  enumerateBones(root);
+  buildSkeletonHelper(root);
+  APP.charMixer=new THREE.AnimationMixer(root);
+
+  $("model-info").innerHTML = `Loaded. Height: ${newSz.y.toFixed(2)}m. Bones mapped: <b>${Object.keys(APP.charBones).length}/${DRIVEN_BONES.length}</b>`;
+  $("btn-rec").disabled = false;
+}
+
+function enumerateBones(root){
+  APP._allBones={};
+  APP.charBones={};
+  APP.charBoneRestQuats={};
+  APP.charBoneRestPos={};
+  root.traverse(o => { if (o.isBone || o.type === "Bone") APP._allBones[o.name] = o; });
+
+  for (const logical of DRIVEN_BONES){
+    const candidates = KALIDO_TO_CC5[logical];
+    let found=null;
+    for (const sub of candidates){
+      for (const bname of Object.keys(APP._allBones)){
+        if (bname.toLowerCase().includes(sub.toLowerCase())){
+          found = APP._allBones[bname]; break;
+        }
+      }
+      if (found) break;
+    }
+    if (found){
+      APP.charBones[logical] = found;
+      APP.charBoneRestQuats[logical] = found.quaternion.clone();
+      APP.charBoneRestPos[logical] = found.position.clone();
+      if (logical === "Hips") APP.hipRestY = found.position.y;
+    }
+  }
+  window.charBones = APP.charBones;
+}
+
+function buildSkeletonHelper(root){
+  if (APP.skeletonHelper) APP.scene.remove(APP.skeletonHelper);
+  APP.skeletonHelper=new THREE.SkeletonHelper(root);
+  APP.skeletonHelper.material.linewidth = 2;
+  APP.skeletonHelper.visible = APP.showSkeleton;
+  APP.scene.add(APP.skeletonHelper);
+}
+
+/* =============================================================
+   MEDIAPIPE
+============================================================= */
+function initHolistic(){
+  if (APP.holistic) return APP.holistic;
+  APP.holistic = new Holistic({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}`,
+  });
+  // model complexity 1 is acceptable on mobile; 0 is faster but jittery
+  APP.holistic.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    enableSegmentation: false,
+    refineFaceLandmarks: false,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  });
+  APP.holistic.onResults(onHolisticResults);
+  return APP.holistic;
+}
+function teardownHolistic(){
+  if (APP.holistic){ try { APP.holistic.close(); } catch(e){} APP.holistic=null; }
+  APP.trackingOK=false; APP.lostFrames=0;
+  $("pill-track").textContent="off";
+  $("pill-track-dot").className="dot";
+}
+
+/* =============================================================
+   LIVE CAMERA — with facingMode toggle for mobile
+============================================================= */
+async function startCamera(){
+  if (APP.stream) return;
+  if (APP.mode !== "live"){ toast("Switch to Live Camera mode first.", "error"); return; }
+
+  const constraints = {
+    audio: false,
+    video: {
+      facingMode: { ideal: APP.facingMode },
+      width:  { ideal: 1280 },
+      height: { ideal: 720 },
+    },
+  };
+  try {
+    APP.stream = await navigator.mediaDevices.getUserMedia(constraints);
+  } catch (e) {
+    if (e.name === "NotAllowedError" || e.name === "PermissionDeniedError"){
+      showHelp("Camera permission needed",
+        "Camera was blocked. Tap the <b>AA</b> icon in Safari (or the lock/site-settings menu in Chrome) → <b>Website Settings</b> → set <b>Camera</b> to <b>Allow</b>, then reload this page.");
+    } else if (e.name === "NotFoundError" || e.name === "OverconstrainedError"){
+      // try without facingMode constraint
+      try {
+        APP.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+        toast("Using default camera (facingMode unavailable).", "");
+      } catch (e2){
+        toast("No camera available: " + e2.message, "error");
+        return;
+      }
+    } else {
+      toast("Camera failed: " + e.message, "error");
+      console.error(e);
+      return;
+    }
+  }
+
+  APP.videoEl = $("cam-video");
+  APP.videoEl.srcObject = APP.stream;
+  try { await APP.videoEl.play(); } catch(e){}
+
+  APP.camOverlayEl = $("cam-overlay");
+  // size overlay to actual track dims for accurate landmark drawing
+  const t = APP.stream.getVideoTracks()[0];
+  const s = t.getSettings();
+  APP.camOverlayEl.width  = s.width  || 640;
+  APP.camOverlayEl.height = s.height || 480;
+
+  initHolistic();
+  APP.cameraMP = new Camera(APP.videoEl, {
+    onFrame: async () => {
+      if (APP.holistic && APP.mode === "live") await APP.holistic.send({ image: APP.videoEl });
+    },
+    width:  s.width  || 640,
+    height: s.height || 480,
+  });
+  APP.cameraMP.start();
+
+  $("btn-cam-start").disabled = true;
+  $("btn-cam-stop").disabled  = false;
+  $("cam-status").textContent = `Camera running (${APP.facingMode === "user" ? "front" : "back"}).`;
+  toast("Camera started.", "success");
+}
+function stopCamera(){
+  if (APP.cameraMP){ try { APP.cameraMP.stop(); } catch(e){} APP.cameraMP=null; }
+  teardownHolistic();
+  if (APP.stream){ APP.stream.getTracks().forEach(t => t.stop()); APP.stream=null; }
+  if (APP.videoEl){ try { APP.videoEl.srcObject=null; } catch(e){} }
+  $("btn-cam-start").disabled=false;
+  $("btn-cam-stop").disabled =true;
+  $("cam-status").textContent="Camera stopped.";
+}
+$("btn-cam-start").addEventListener("click", startCamera);
+$("btn-cam-stop").addEventListener ("click", stopCamera);
+
+/* Facing-mode toggle — restarts the stream */
+document.querySelectorAll("#facing-seg button").forEach(b => {
+  b.addEventListener("click", async () => {
+    document.querySelectorAll("#facing-seg button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    APP.facingMode = b.dataset.face;
+    if (APP.stream){
+      stopCamera();
+      // brief delay so the previous track fully releases on iOS
+      setTimeout(startCamera, 200);
+    }
+  });
+});
+
+/* =============================================================
+   PRE-RECORDED VIDEO MODE — iOS picks from Photos via file input
+============================================================= */
+function loadVideoFile(file){
+  if (!file) return;
+  if (APP.videoFileUrl){ try { URL.revokeObjectURL(APP.videoFileUrl); } catch(e){} APP.videoFileUrl=null; }
+  APP.videoFile = file;
+  APP.videoFileUrl = URL.createObjectURL(file);
+  const v=APP.videoFileEl;
+  v.src = APP.videoFileUrl;
+  v.load();
+  v.addEventListener("loadedmetadata", onVideoMetadataLoaded, { once: true });
+  $("video-info").textContent = `Loading: ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)...`;
+}
+function onVideoMetadataLoaded(){
+  const v=APP.videoFileEl;
+  APP.videoOverlayEl.width = 320;
+  APP.videoOverlayEl.height = 240;
+  const dur = v.duration || 0;
+  $("video-info").innerHTML = `<b>${APP.videoFile ? APP.videoFile.name : "video"}</b><br>${v.videoWidth}×${v.videoHeight} · ${formatTime(dur)}`;
+  $("vid-scrub").disabled = false;
+  $("btn-vid-play").disabled  = false;
+  $("btn-vid-pause").disabled = false;
+  $("btn-tpose-vid").disabled = false;
+  $("vid-label").textContent = "Video: " + (APP.videoFile ? APP.videoFile.name : "");
+  APP.videoLastSentTime = -1;
+  updateVideoTime();
+}
+function startVideoTracking(){
+  if (APP.mode !== "video") return;
+  initHolistic();
+  if (APP.videoRAFId == null){
+    APP.videoIsProcessing = false;
+    APP.videoLastSentTime = -1;
+    APP.videoRAFId = requestAnimationFrame(videoProcessLoop);
+  }
+}
+function stopVideoTracking(){
+  if (APP.videoRAFId != null){ cancelAnimationFrame(APP.videoRAFId); APP.videoRAFId = null; }
+  teardownHolistic();
+}
+async function videoProcessLoop(){
+  APP.videoRAFId = null;
+  if (APP.mode !== "video" || !APP.holistic) return;
+  const v=APP.videoFileEl;
+  if (v && v.readyState >= 2 && !APP.videoIsProcessing){
+    const playing = !v.paused && !v.ended;
+    const seeked  = v.currentTime !== APP.videoLastSentTime;
+    const calibrating = APP.calibrationCapturing;
+    if (playing || seeked || calibrating){
+      APP.videoIsProcessing = true;
+      APP.videoLastSentTime = v.currentTime;
+      try { await APP.holistic.send({ image: v }); }
+      catch (e){ console.warn("[video] holistic.send failed:", e); }
+      APP.videoIsProcessing = false;
+    }
+  }
+  if (APP.mode === "video") APP.videoRAFId = requestAnimationFrame(videoProcessLoop);
+}
+function formatTime(s){
+  if (!isFinite(s)) return "0:00";
+  const m=Math.floor(s/60), sec = s - m*60;
+  return `${m}:${sec.toFixed(2).padStart(5,"0")}`;
+}
+function updateVideoTime(){
+  const v=APP.videoFileEl; if (!v) return;
+  $("vid-time").textContent = `${formatTime(v.currentTime)} / ${formatTime(v.duration||0)}`;
+  const sc=$("vid-scrub");
+  if (!sc.disabled && v.duration){
+    sc.value = Math.round((v.currentTime/v.duration)*1000);
+  }
+}
+function bindVideoControls(){
+  APP.videoFileEl    = $("vid-file");
+  APP.videoOverlayEl = $("vid-overlay");
+
+  $("file-video").addEventListener("change", e => {
+    const f=e.target.files[0]; if (!f) return;
+    loadVideoFile(f);
+    if (APP.mode === "video") startVideoTracking();
+  });
+  $("btn-vid-play").addEventListener("click", () => {
+    const v=APP.videoFileEl;
+    if (!v.src){ toast("Pick a video first.", "error"); return; }
+    v.play().catch(err => toast("Video play failed: " + err.message, "error"));
+  });
+  $("btn-vid-pause").addEventListener("click", () => {
+    if (APP.videoFileEl) APP.videoFileEl.pause();
+  });
+  $("vid-scrub").addEventListener("input", e => {
+    const v=APP.videoFileEl;
+    if (!v || !v.duration) return;
+    const frac = parseInt(e.target.value, 10) / 1000;
+    v.currentTime = frac * v.duration;
+  });
+  APP.videoFileEl.addEventListener("play",  updateVideoTime);
+  APP.videoFileEl.addEventListener("pause", updateVideoTime);
+  APP.videoFileEl.addEventListener("timeupdate", updateVideoTime);
+  APP.videoFileEl.addEventListener("seeked", () => { updateVideoTime(); APP.videoLastSentTime = -1; });
+  APP.videoFileEl.addEventListener("ended", () => {
+    updateVideoTime();
+    if (APP.recording){ toast("Video ended — auto-stopping recording.", ""); stopRecording(); }
+  });
+
+  $("btn-tpose-vid").addEventListener("click", () => {
+    if (APP.mode !== "video"){ toast("Switch to video mode first.", "error"); return; }
+    if (!APP.videoFile){ toast("Load a video first.", "error"); return; }
+    if (!APP.holistic) startVideoTracking();
+    APP.calibrationCapturing = true;
+    APP.calibrationStart = performance.now();
+    APP.calibrationSamples = [];
+    $("tpose-status").textContent = "Capturing T-pose from current frame... (3s)";
+    APP.videoLastSentTime = -1;
+  });
+}
+
+/* =============================================================
+   MODE SWITCHING
+============================================================= */
+function setMode(newMode){
+  if (newMode !== "live" && newMode !== "video") return;
+  if (APP.mode === newMode) return;
+
+  if (APP.mode === "live") stopCamera();
+  else if (APP.mode === "video"){
+    const v=APP.videoFileEl;
+    if (v){ try { v.pause(); } catch(e){} }
+    stopVideoTracking();
+  }
+
+  APP.mode = newMode;
+
+  document.querySelectorAll("#mode-seg button").forEach(b => {
+    b.classList.toggle("active", b.dataset.mode === newMode);
+  });
+
+  $("card-live").style.display  = (newMode === "live")  ? "" : "none";
+  $("card-video").style.display = (newMode === "video") ? "" : "none";
+  $("cam-box").style.display = (newMode === "live")  ? "" : "none";
+  $("vid-box").style.display = (newMode === "video") ? "" : "none";
+
+  if (newMode === "video" && APP.videoFile) startVideoTracking();
+
+  resetAllEuros();
+
+  $("mode-hint").textContent = (newMode === "live")
+    ? "Live camera. Position iPad on tripod, throw combos, tap REC."
+    : "Pre-recorded mode. Pick a video from Photos, calibrate, play & REC.";
+  toast("Mode: " + (newMode === "live" ? "Live Camera" : "Pre-recorded"), "");
+}
+document.querySelectorAll("#mode-seg button").forEach(b => {
+  b.addEventListener("click", () => setMode(b.dataset.mode));
+});
+
+/* =============================================================
+   HOLISTIC RESULTS — same retargeting as desktop
+============================================================= */
+function onHolisticResults(res){
+  APP.lastResults = res;
+
+  const overlay     = (APP.mode === "video") ? APP.videoOverlayEl : APP.camOverlayEl;
+  const sourceVideo = (APP.mode === "video") ? APP.videoFileEl    : APP.videoEl;
+
+  if (overlay){
+    const ctx=overlay.getContext("2d");
+    ctx.clearRect(0,0,overlay.width,overlay.height);
+    if (res.poseLandmarks){
+      ctx.fillStyle="#4ec9b0";
+      for (const lm of res.poseLandmarks){
+        ctx.beginPath();
+        ctx.arc(lm.x*overlay.width, lm.y*overlay.height, 3, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+
+  const haveBody = !!(res.poseLandmarks && res.poseWorldLandmarks);
+  if (haveBody){
+    APP.trackingOK = true; APP.lostFrames = 0;
+    $("pill-track").textContent = "OK";
+    $("pill-track-dot").className = "dot green";
+  } else {
+    APP.lostFrames++;
+    APP.trackingOK = false;
+    $("pill-track").textContent = "lost ("+APP.lostFrames+")";
+    $("pill-track-dot").className = "dot red";
+    return;
+  }
+
+  // T-pose calibration sample collection
+  if (APP.calibrationCapturing){
+    APP.calibrationSamples.push({
+      pose: res.poseLandmarks,
+      poseWorld: res.poseWorldLandmarks,
+    });
+    const elapsed = (performance.now() - APP.calibrationStart) / 1000;
+    $("tpose-status").textContent = `Capturing... ${elapsed.toFixed(1)}s / 3.0s (${APP.calibrationSamples.length} samples)`;
+    if (elapsed >= 3.0) finalizeCalibration();
+  }
+
+  let pose;
+  try {
+    pose = Kalidokit.Pose.solve(res.poseWorldLandmarks, res.poseLandmarks, {
+      runtime: "mediapipe", video: sourceVideo, enableLegs: true,
+    });
+  } catch (e){ console.warn("[kalido] solve fail:", e); return; }
+  if (!pose) return;
+
+  driveCharacterFromPose(pose);
+  updateStickFigure(res.poseWorldLandmarks);
+
+  if (APP.recording) recordFrame();
+}
+
+function finalizeCalibration(){
+  APP.calibrationCapturing = false;
+  if (APP.calibrationSamples.length === 0){
+    toast("No T-pose samples captured.", "error"); return;
+  }
+  const last = APP.calibrationSamples[APP.calibrationSamples.length - 1];
+  const srcVid = (APP.mode === "video") ? APP.videoFileEl : APP.videoEl;
+  let baselinePose = null;
+  try {
+    baselinePose = Kalidokit.Pose.solve(last.poseWorld, last.pose, {
+      runtime: "mediapipe", video: srcVid, enableLegs: true,
+    });
+  } catch (e){}
+  APP.calibrationBaseline = {
+    landmarks: last.pose,
+    kalidoKitPose: baselinePose,
+  };
+  $("tpose-status").innerHTML = '<span style="color:var(--good)">✓ T-pose calibrated</span>';
+  $("pill-cal").textContent = "Yes";
+  $("pill-cal-dot").className = "dot green";
+  toast("T-pose calibrated.", "success");
+}
+
+$("btn-tpose").addEventListener("click", () => {
+  if (APP.mode === "live"){
+    if (!APP.holistic){ toast("Start camera first.", "error"); return; }
+    APP.calibrationCapturing = true;
+    APP.calibrationStart = performance.now();
+    APP.calibrationSamples = [];
+    $("tpose-status").textContent = "Stand in T-pose, hold 3 seconds...";
+  } else {
+    if (!APP.videoFile){ toast("Load a video first.", "error"); return; }
+    if (!APP.holistic) startVideoTracking();
+    APP.calibrationCapturing = true;
+    APP.calibrationStart = performance.now();
+    APP.calibrationSamples = [];
+    $("tpose-status").textContent = "Capturing T-pose from current frame... (3s)";
+    APP.videoLastSentTime = -1;
+  }
+});
+
+/* =============================================================
+   CHARACTER DRIVING (identical math to desktop)
+============================================================= */
+const _tmpQ = new THREE.Quaternion();
+const _tmpQ2 = new THREE.Quaternion();
+const _baselineQ = new THREE.Quaternion();
+
+function poseBoneRotToQuat(rot){
+  if (!rot) return null;
+  const e = new THREE.Euler(rot.x || 0, rot.y || 0, rot.z || 0, "XYZ");
+  return new THREE.Quaternion().setFromEuler(e);
+}
+function getBaselineQuatForBone(logical){
+  if (!APP.calibrationBaseline || !APP.calibrationBaseline.kalidoKitPose) return new THREE.Quaternion();
+  const base = APP.calibrationBaseline.kalidoKitPose;
+  const bq = poseBoneRotToQuat(base[logical]);
+  return bq || new THREE.Quaternion();
+}
+function driveCharacterFromPose(pose){
+  if (!APP.charRoot) return;
+  const t = performance.now() / 1000.0;
+
+  for (const logical of DRIVEN_BONES){
+    const bone = APP.charBones[logical];
+    if (!bone) continue;
+    const rot = pose[logical];
+    if (!rot) continue;
+
+    let kQuat = poseBoneRotToQuat(rot);
+
+    if (APP.calibrationBaseline && APP.calibrationBaseline.kalidoKitPose){
+      const b = getBaselineQuatForBone(logical);
+      _baselineQ.copy(b).invert();
+      kQuat.multiply(_baselineQ);
+    }
+
+    const euro = getEuroSetForBone(logical);
+    const fx = euro.x.filter(kQuat.x, t);
+    const fy = euro.y.filter(kQuat.y, t);
+    const fz = euro.z.filter(kQuat.z, t);
+    const fw = euro.w.filter(kQuat.w, t);
+    kQuat.set(fx, fy, fz, fw).normalize();
+
+    const corr = window.boneCorrections[logical] || { x:0, y:0, z:0 };
+    const corrQ = eulerToQuat(corr.x, corr.y, corr.z, "XYZ");
+    _tmpQ.copy(corrQ).invert();
+    const applied = corrQ.clone().multiply(kQuat).multiply(_tmpQ);
+
+    const restQ = APP.charBoneRestQuats[logical];
+    if (restQ){
+      _tmpQ2.copy(restQ);
+      bone.quaternion.copy(applied).multiply(_tmpQ2);
+    } else {
+      bone.quaternion.copy(applied);
+    }
+  }
+
+  if (pose.Hips && pose.Hips.position && APP.charBones.Hips){
+    const hp = pose.Hips.position;
+    const hipBone = APP.charBones.Hips;
+    const rest = APP.charBoneRestPos.Hips;
+    hipBone.position.x = rest.x + (hp.x || 0) * 0.3;
+    hipBone.position.z = rest.z + (hp.z || 0) * 0.3;
+  }
+}
+
+/* =============================================================
+   RECORDING
+============================================================= */
+function recordFrame(){
+  let t;
+  if (APP.mode === "video" && APP.videoFileEl){
+    t = APP.videoFileEl.currentTime - APP.recStartVideo;
+    if (t < 0) t = 0;
+  } else {
+    t = (performance.now() - APP.recStart) / 1000.0;
+  }
+  if (APP.recFrames.length > 0){
+    const prev = APP.recFrames[APP.recFrames.length - 1].t;
+    if (t <= prev) t = prev + 1e-4;
+  }
+  const frame = { t, q:{}, hipPos:null };
+  for (const logical of DRIVEN_BONES){
+    const b = APP.charBones[logical]; if (!b) continue;
+    frame.q[logical] = [b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w];
+  }
+  if (APP.charBones.Hips){
+    const h = APP.charBones.Hips;
+    frame.hipPos = [h.position.x, h.position.y, h.position.z];
+  }
+  APP.recFrames.push(frame);
+  $("pill-frames").textContent = APP.recFrames.length;
+}
+
+function startRecording(){
+  if (!APP.charRoot){
+    toast("Load a character first.", "error");
+    return;
+  }
+  if (APP.recording) return;
+  if (!APP.calibrationBaseline){
+    if (!confirm("Not calibrated yet. Record anyway? (Quality will be lower.)")) return;
+  }
+  APP.recording = true;
+  APP.recStart = performance.now();
+  APP.recStartVideo = (APP.mode === "video" && APP.videoFileEl) ? APP.videoFileEl.currentTime : 0;
+  APP.recFrames = [];
+  $("btn-rec").classList.add("recording");
+  $("rec-badge").classList.add("visible");
+  ($("cam-box") || {}).classList && $("cam-box").classList.add("rec");
+  ($("vid-box") || {}).classList && $("vid-box").classList.add("rec");
+  toast("Recording...", "");
+}
+
+function stopRecording(){
+  if (!APP.recording) return;
+  APP.recording = false;
+  $("btn-rec").classList.remove("recording");
+  $("rec-badge").classList.remove("visible");
+  $("cam-box").classList.remove("rec");
+  $("vid-box").classList.remove("rec");
+
+  const n = APP.recFrames.length;
+  if (n < 2){
+    toast("Too few frames (" + n + ").", "error");
+    return;
+  }
+  const take = buildTakeFromFrames(APP.recFrames);
+  APP.takes.push(take);
+  APP.activeTake = take;
+  $("pill-takes").textContent = APP.takes.length;
+  $("btn-export-last").disabled = false;
+  renderTakes();
+  toast(`Take ${take.name}: ${take.clip.duration.toFixed(2)}s, ${n} frames.`, "success");
+}
+
+$("btn-rec").addEventListener("click", () => {
+  if (APP.recording) stopRecording();
+  else startRecording();
+});
+$("btn-export-last").addEventListener("click", () => {
+  if (APP.activeTake) exportTake(APP.activeTake);
+  else toast("No take to export.", "error");
+});
+
+function buildTakeFromFrames(frames){
+  const id = APP.takes.length + 1;
+  const name = "take_" + String(id).padStart(3, "0");
+  const times = frames.map(f => f.t);
+  const duration = times[times.length - 1] - times[0];
+  const t0 = times[0];
+  const zTimes = times.map(t => t - t0);
+
+  const tracks = [];
+  for (const logical of DRIVEN_BONES){
+    const bone = APP.charBones[logical]; if (!bone) continue;
+    const values = [];
+    let hasData = false;
+    for (const f of frames){
+      const q = f.q[logical];
+      if (q){ values.push(q[0], q[1], q[2], q[3]); hasData = true; }
+      else  { values.push(0, 0, 0, 1); }
+    }
+    if (!hasData) continue;
+    tracks.push(new THREE.QuaternionKeyframeTrack(bone.name + ".quaternion", zTimes, values));
+  }
+  if (APP.charBones.Hips && frames.some(f => f.hipPos)){
+    const hipBoneName = APP.charBones.Hips.name;
+    const vals = [];
+    for (const f of frames){
+      const p = f.hipPos || [0, APP.hipRestY, 0];
+      vals.push(p[0], p[1], p[2]);
+    }
+    tracks.push(new THREE.VectorKeyframeTrack(hipBoneName + ".position", zTimes, vals));
+  }
+  const clip = new THREE.AnimationClip(name, duration, tracks);
+  return {
+    id, name, category: "Jab", grade: "B",
+    clip, frames: frames.map(f => ({ ...f, t: f.t - t0 })),
+    trimIn: 0, trimOut: duration,
+  };
+}
+
+function renderTakes(){
+  const div = $("takes");
+  if (!APP.takes.length){ div.innerHTML = '<div class="hint">No takes yet. Tap REC.</div>'; return; }
+  div.innerHTML = "";
+  // newest first
+  const list = [...APP.takes].reverse();
+  for (const tk of list){
+    const el = document.createElement("div");
+    el.className = "take" + (APP.activeTake === tk ? " selected" : "");
+    el.innerHTML = `
+      <div class="take-top">
+        <span class="take-name">${tk.name}</span>
+        <span class="take-meta">${tk.clip.duration.toFixed(2)}s · ${tk.frames.length}f</span>
+      </div>
+      <div class="take-row">
+        <input type="text" value="${tk.name}" data-field="name" />
+      </div>
+      <div class="take-row">
+        <select data-field="category">
+          ${["Jab","Cross","Hook","Uppercut","Idle","Footwork","Combo","Other"].map(c =>
+            `<option value="${c}" ${c===tk.category?"selected":""}>${c}</option>`).join("")}
+        </select>
+        <select data-field="grade">
+          ${["A","B","C","Skip"].map(g =>
+            `<option value="${g}" ${g===tk.grade?"selected":""}>${g}</option>`).join("")}
+        </select>
+      </div>
+      <div class="take-actions">
+        <button class="share" data-act="share">Share / Save</button>
+        <button class="del"   data-act="delete">Delete</button>
+      </div>
+    `;
+    el.querySelectorAll("input,select").forEach(inp => {
+      inp.addEventListener("change", () => { tk[inp.dataset.field] = inp.value; });
+    });
+    el.querySelectorAll("button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const act = btn.dataset.act;
+        if (act === "share") { APP.activeTake = tk; exportTake(tk); }
+        else if (act === "delete"){
+          if (confirm("Delete " + tk.name + "?")){
+            APP.takes = APP.takes.filter(t => t !== tk);
+            if (APP.activeTake === tk){
+              APP.activeTake = APP.takes[APP.takes.length - 1] || null;
+              if (!APP.activeTake) $("btn-export-last").disabled = true;
+            }
+            $("pill-takes").textContent = APP.takes.length;
+            renderTakes();
+          }
+        }
+      });
+    });
+    div.appendChild(el);
+  }
+}
+
+/* =============================================================
+   EXPORT — Web Share API on iOS, download fallback elsewhere
+============================================================= */
+function buildTrimmedClip(tk){
+  const startT = tk.trimIn, endT = tk.trimOut;
+  const filtered = tk.frames.filter(f => f.t >= startT && f.t <= endT);
+  if (filtered.length < 2) throw new Error("Trim region has fewer than 2 frames.");
+  const t0 = filtered[0].t;
+  const times = filtered.map(f => f.t - t0);
+  const duration = times[times.length - 1];
+
+  const tracks = [];
+  for (const logical of DRIVEN_BONES){
+    const bone = APP.charBones[logical]; if (!bone) continue;
+    const vals = [];
+    for (const f of filtered){
+      const q = f.q[logical] || [0,0,0,1];
+      vals.push(q[0], q[1], q[2], q[3]);
+    }
+    tracks.push(new THREE.QuaternionKeyframeTrack(bone.name + ".quaternion", times, vals));
+  }
+  if (APP.charBones.Hips){
+    const vals = [];
+    for (const f of filtered){
+      const p = f.hipPos || [0, APP.hipRestY, 0];
+      vals.push(p[0], p[1], p[2]);
+    }
+    tracks.push(new THREE.VectorKeyframeTrack(APP.charBones.Hips.name + ".position", times, vals));
+  }
+  return new THREE.AnimationClip(tk.name + "_trim", duration, tracks);
+}
+
+async function exportTake(tk){
+  if (!APP.charRoot){ toast("No character to export.", "error"); return; }
+  let clip;
+  try { clip = buildTrimmedClip(tk); }
+  catch (e){ toast("Build clip failed: " + e.message, "error"); return; }
+
+  const exporter = new THREE.GLTFExporter();
+  exporter.parse(APP.charRoot, async gltf => {
+    const blob = new Blob([gltf], { type: "model/gltf-binary" });
+    const fname = `${tk.name}_${tk.category}_${tk.grade}.glb`;
+    APP.lastExportedBlob = blob;
+    APP.lastExportedName = fname;
+
+    // Try the Web Share API (iOS share sheet). Falls back to download if unavailable.
+    const file = new File([blob], fname, { type: "model/gltf-binary" });
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [file] })){
+        await navigator.share({ files: [file], title: "Mocap clip", text: fname });
+        toast("Shared " + fname, "success");
+        return;
+      }
+    } catch (e){
+      // user cancelled share or share rejected — fall through to download
+      if (e.name !== "AbortError"){
+        console.warn("[share] failed, falling back to download:", e);
+      } else {
+        toast("Share cancelled.", "");
+        return;
+      }
+    }
+    // Download fallback
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 5000);
+    toast("Downloaded " + fname + " (" + (blob.size/1024).toFixed(0) + " KB)", "success");
+  }, err => {
+    toast("GLTFExporter failed: " + err.message, "error");
+  }, { binary: true, animations: [clip] });
+}
+
+/* =============================================================
+   STICK FIGURE — same renderer as desktop but with on-screen mode toggle
+============================================================= */
+const POSE_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],
+  [11,12],[11,23],[12,24],[23,24],
+  [11,13],[13,15],[15,17],[15,19],[15,21],[17,19],
+  [12,14],[14,16],[16,18],[16,20],[16,22],[18,20],
+  [23,25],[25,27],[27,29],[27,31],[29,31],
+  [24,26],[26,28],[28,30],[28,32],[30,32],
+];
+
+const STICK = {
+  mode: 2, group: null, joints: [],
+  lineSeg: null, lineGeom: null, jointMat: null, lineMat: null,
+  characterHipWorld: new THREE.Vector3(),
+};
+
+function initStickFigure(){
+  STICK.group = new THREE.Group();
+  STICK.group.name = "MP_StickFigure";
+  APP.scene.add(STICK.group);
+
+  STICK.jointMat = new THREE.MeshBasicMaterial({ color: 0xffeb3b, transparent: true, opacity: 1.0 });
+  STICK.lineMat  = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 1.0 });
+
+  const sphereGeom = new THREE.SphereGeometry(0.03, 8, 6);
+  for (let i = 0; i < 33; i++){
+    const m = new THREE.Mesh(sphereGeom, STICK.jointMat);
+    m.visible = false;
+    STICK.group.add(m);
+    STICK.joints.push(m);
+  }
+  STICK.lineGeom = new THREE.BufferGeometry();
+  const positions = new Float32Array(POSE_CONNECTIONS.length * 2 * 3);
+  STICK.lineGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  STICK.lineSeg = new THREE.LineSegments(STICK.lineGeom, STICK.lineMat);
+  STICK.lineSeg.visible = false;
+  STICK.group.add(STICK.lineSeg);
+}
+function applyStickFigureMode(){
+  const visible = STICK.mode !== 3;
+  STICK.lineSeg.visible = visible;
+  for (const j of STICK.joints) j.visible = visible && j._hasData;
+  if (STICK.mode === 2){
+    STICK.jointMat.opacity = 0.55;
+    STICK.lineMat.opacity  = 0.65;
+  } else {
+    STICK.jointMat.opacity = 1.0;
+    STICK.lineMat.opacity  = 1.0;
+  }
+}
+function updateStickFigure(poseWorldLandmarks){
+  if (!STICK.group) return;
+  if (STICK.mode === 3) return;
+  if (!poseWorldLandmarks || !poseWorldLandmarks.length){
+    for (const j of STICK.joints){ j.visible = false; j._hasData = false; }
+    STICK.lineSeg.visible = false;
+    return;
+  }
+  const offsetX = (STICK.mode === 1) ? -1.5 : 0;
+  const lh = poseWorldLandmarks[23], rh = poseWorldLandmarks[24];
+  let pelvisX = 0, pelvisY = 0, pelvisZ = 0;
+  if (lh && rh){
+    pelvisX = (lh.x + rh.x) * 0.5;
+    pelvisY = (lh.y + rh.y) * 0.5;
+    pelvisZ = (lh.z + rh.z) * 0.5;
+  }
+  if (APP.charBones.Hips){
+    APP.charBones.Hips.getWorldPosition(STICK.characterHipWorld);
+  } else {
+    STICK.characterHipWorld.set(0, 1.0, 0);
+  }
+  function lmToWorld(lm){
+    return [
+      (lm.x - pelvisX) + STICK.characterHipWorld.x + offsetX,
+      -(lm.y - pelvisY) + STICK.characterHipWorld.y,
+      (lm.z - pelvisZ) + STICK.characterHipWorld.z,
+    ];
+  }
+  for (let i = 0; i < 33; i++){
+    const lm = poseWorldLandmarks[i];
+    const j = STICK.joints[i];
+    if (!lm || (lm.visibility !== undefined && lm.visibility < 0.3)){
+      j.visible = false; j._hasData = false; continue;
+    }
+    const w = lmToWorld(lm);
+    j.position.set(w[0], w[1], w[2]);
+    j._hasData = true; j.visible = true;
+  }
+  const pos = STICK.lineGeom.attributes.position.array;
+  for (let i = 0; i < POSE_CONNECTIONS.length; i++){
+    const [a, b] = POSE_CONNECTIONS[i];
+    const la = poseWorldLandmarks[a], lb = poseWorldLandmarks[b];
+    const base = i * 6;
+    if (la && lb){
+      const wa = lmToWorld(la), wb = lmToWorld(lb);
+      pos[base+0]=wa[0]; pos[base+1]=wa[1]; pos[base+2]=wa[2];
+      pos[base+3]=wb[0]; pos[base+4]=wb[1]; pos[base+5]=wb[2];
+    } else {
+      pos[base+0]=pos[base+1]=pos[base+2]=0;
+      pos[base+3]=pos[base+4]=pos[base+5]=0;
+    }
+  }
+  STICK.lineGeom.attributes.position.needsUpdate = true;
+  STICK.lineSeg.visible = true;
+}
+
+document.querySelectorAll("#stick-seg button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#stick-seg button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    STICK.mode = parseInt(b.dataset.stick, 10);
+    applyStickFigureMode();
+  });
+});
+
+/* =============================================================
+   PANEL COLLAPSE
+============================================================= */
+document.querySelectorAll(".card-h[data-toggle]").forEach(h => {
+  h.addEventListener("click", () => h.parentElement.classList.toggle("collapsed"));
+});
+
+/* Help modal */
+function showHelp(title, body){
+  $("help-title").textContent = title;
+  $("help-body").innerHTML = body;
+  $("help").classList.add("visible");
+}
+$("help-close").addEventListener("click", () => $("help").classList.remove("visible"));
+
+/* Wake-lock — keep screen on while recording (best-effort) */
+let wakeLock = null;
+async function requestWakeLock(){
+  try {
+    if ("wakeLock" in navigator){
+      wakeLock = await navigator.wakeLock.request("screen");
+    }
+  } catch (e){ /* user gesture required, etc. */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (wakeLock && document.visibilityState === "visible") requestWakeLock();
+});
+
+/* =============================================================
+   BOOT
+============================================================= */
+initThree();
+initStickFigure();
+applyStickFigureMode();
+bindVideoControls();
+
+// First-tap: ask for wake-lock + warm up audio (some iOS quirks)
+document.addEventListener("touchstart", () => { requestWakeLock(); }, { once: true });
+
+console.log("[boot] iPad/mobile mocap ready.");
+console.log("[boot] Tap Start Camera → Capture T-pose → REC → Stop → Share.");
+console.log("[boot] window.APP, window.charBones, window.boneCorrections exposed for debugging.");
+
+</script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# =====================================================
+# VR Boxing Mocap — git ignores
+# =====================================================
+
+# The UK1 character GLB is ~478 MB, far over GitHub's 100 MB hard limit.
+# Host it as a GitHub Release asset (up to 2 GB per file, unlimited bandwidth)
+# instead of committing it. The ipad.html "Load UK1" button will try
+# ./uk1_outboxer.glb first (works locally), then fall back gracefully.
+uk1_outboxer.glb
+
+# Conversion artifacts (large, regenerable)
+_convert_uk1.log
+
+# Generated test artifacts / screenshots from local QC runs
+one_click_test.png
+test_*.png
+*_test.png
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.tmp
+.vscode/
+.idea/
+
+# Local node noise if anyone npm's
+node_modules/
+package-lock.json

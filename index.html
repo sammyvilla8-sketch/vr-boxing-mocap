@@ -1,0 +1,2335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>VR Boxing Browser Mocap (CC5 Retarget + QC)</title>
+<style>
+  :root {
+    --bg: #1a1d22;
+    --panel: #23272d;
+    --panel2: #2c3138;
+    --fg: #e6e6e6;
+    --muted: #9aa3ad;
+    --accent: #4ec9b0;
+    --warn: #d7a800;
+    --bad: #e25555;
+    --good: #4ec9b0;
+    --border: #383d45;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; height:100%; background:var(--bg); color:var(--fg);
+               font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size:13px; overflow:hidden; }
+  #app { display:grid; grid-template-columns: 320px 1fr 340px; grid-template-rows: 1fr 56px; height:100vh; }
+  #left  { grid-row:1/2; grid-column:1/2; overflow-y:auto; background:var(--panel); border-right:1px solid var(--border); padding:8px; }
+  #center{ grid-row:1/2; grid-column:2/3; position:relative; background:#101216; }
+  #right { grid-row:1/2; grid-column:3/4; overflow-y:auto; background:var(--panel); border-left:1px solid var(--border); padding:8px; }
+  #statusbar { grid-row:2/3; grid-column:1/4; background:var(--panel2); border-top:1px solid var(--border);
+               display:flex; gap:16px; align-items:center; padding:0 12px; font-size:12px; }
+  .stat { display:flex; gap:6px; align-items:center; }
+  .stat .dot { width:10px; height:10px; border-radius:50%; background:#666; }
+  .stat .dot.green { background: var(--good); }
+  .stat .dot.yellow { background: var(--warn); }
+  .stat .dot.red   { background: var(--bad); }
+
+  canvas#three { width:100%; height:100%; display:block; }
+  #webcam-preview, #video-preview { position:absolute; top:8px; left:8px; width:320px; height:240px;
+                    border:1px solid var(--border); border-radius:4px; background:#000; z-index:5; overflow:hidden; }
+  #webcam-preview video, #webcam-preview canvas,
+  #video-preview video, #video-preview canvas { width:100%; height:100%; object-fit:contain; }
+  #webcam-preview .label, #video-preview .label { position:absolute; top:4px; left:4px; background:rgba(0,0,0,0.6); padding:2px 6px;
+                           font-size:11px; border-radius:3px; z-index:2; }
+  #webcam-preview canvas, #video-preview canvas { position:absolute; top:0; left:0; pointer-events:none; }
+
+  .mode-toggle { display:flex; gap:0; border:1px solid var(--border); border-radius:4px; overflow:hidden; margin-bottom:4px; }
+  .mode-toggle label { flex:1; text-align:center; padding:6px 8px; cursor:pointer; font-size:12px; color:var(--muted);
+                       background:#1a1d22; border-right:1px solid var(--border); user-select:none; }
+  .mode-toggle label:last-child { border-right:none; }
+  .mode-toggle input[type="radio"] { display:none; }
+  .mode-toggle label.active { background:var(--accent); color:#0a0a0a; font-weight:600; }
+
+  .panel { background:var(--panel2); border:1px solid var(--border); border-radius:4px; margin-bottom:8px; }
+  .panel h3 { margin:0; padding:6px 10px; font-size:12px; background:#30363f; border-bottom:1px solid var(--border);
+              cursor:pointer; user-select:none; display:flex; justify-content:space-between; align-items:center; }
+  .panel h3 .arrow { font-size:10px; color:var(--muted); }
+  .panel .body { padding:8px 10px; }
+  .panel.collapsed .body { display:none; }
+
+  button { background:#3a4049; color:var(--fg); border:1px solid var(--border); border-radius:3px;
+           padding:5px 10px; cursor:pointer; font-size:12px; }
+  button:hover:not(:disabled) { background:#454c56; }
+  button:disabled { opacity:0.4; cursor:not-allowed; }
+  button.primary { background:var(--accent); color:#0a0a0a; border-color:var(--accent); font-weight:600; }
+  button.danger { background:var(--bad); border-color:var(--bad); color:#fff; }
+  button.recording { background:var(--bad); border-color:var(--bad); color:#fff; animation: rec-pulse 1s infinite; }
+  @keyframes rec-pulse { 0%,100% { opacity:1; } 50% { opacity:0.6; } }
+
+  input[type="text"], input[type="number"], select {
+    background:#1a1d22; color:var(--fg); border:1px solid var(--border); border-radius:3px; padding:3px 6px; font-size:12px;
+  }
+  input[type="range"] { width:100%; }
+  label { font-size:11px; color:var(--muted); }
+  .row { display:flex; gap:6px; align-items:center; margin:4px 0; }
+  .row label { min-width:60px; }
+  .slider-row { display:grid; grid-template-columns: 70px 1fr 50px; gap:6px; align-items:center; font-size:11px; }
+  .slider-row .val { color:var(--muted); text-align:right; }
+
+  .take-item { background:#1d2127; border:1px solid var(--border); border-radius:3px; padding:6px; margin-bottom:6px; }
+  .take-item .take-row { display:flex; gap:4px; align-items:center; margin:3px 0; }
+  .take-item .take-row label { min-width:50px; font-size:10px; }
+  .take-item input[type="text"] { flex:1; font-size:11px; }
+  .take-item select { font-size:11px; }
+  .take-item .take-status { font-size:10px; color:var(--muted); }
+  .take-item.selected { border-color:var(--accent); }
+
+  .hud-line { display:flex; justify-content:space-between; font-family:Consolas,Monaco,monospace; font-size:11px; padding:1px 0; }
+  .hud-line.warn { color:var(--warn); }
+  .hud-line.bad  { color:var(--bad); }
+
+  .bone-correct { background:#1d2127; border:1px solid var(--border); border-radius:3px; padding:6px; margin-bottom:4px; }
+  .bone-correct .bone-name { font-size:11px; color:var(--accent); font-weight:600; margin-bottom:4px; }
+
+  #timeline { position:absolute; bottom:8px; left:50%; transform:translateX(-50%);
+              width: calc(100% - 32px); max-width: 900px; background:rgba(15,18,22,0.92);
+              border:1px solid var(--border); border-radius:4px; padding:8px; z-index:6; display:none; }
+  #timeline.visible { display:block; }
+  #timeline .tl-track { position:relative; height:24px; background:#111; border:1px solid var(--border); border-radius:2px; cursor:pointer; }
+  #timeline .tl-marker { position:absolute; top:0; bottom:0; width:2px; pointer-events:none; }
+  #timeline .tl-marker.scrub { background:#fff; }
+  #timeline .tl-marker.in    { background:var(--good); }
+  #timeline .tl-marker.out   { background:var(--bad); }
+  #timeline .tl-region { position:absolute; top:0; bottom:0; background: rgba(78,201,176,0.15); pointer-events:none; }
+  #timeline .tl-info { display:flex; gap:12px; font-size:11px; color:var(--muted); margin-top:4px; }
+
+  #toast { position:absolute; top:16px; right:16px; background:#2c3138; border:1px solid var(--border); border-radius:4px;
+           padding:8px 12px; font-size:12px; z-index:100; opacity:0; transition:opacity 0.3s; pointer-events:none; max-width:340px; }
+  #toast.visible { opacity:1; }
+  #toast.error { border-color:var(--bad); color:var(--bad); }
+  #toast.success { border-color:var(--good); color:var(--good); }
+
+  .hint { font-size:10px; color:var(--muted); margin-top:4px; }
+  hr { border:none; border-top:1px solid var(--border); margin:6px 0; }
+  details { margin:4px 0; }
+  details summary { cursor:pointer; font-size:11px; color:var(--muted); user-select:none; }
+  .pill { display:inline-block; background:#1a1d22; padding:1px 6px; border-radius:8px; font-size:10px; color:var(--muted); }
+  .pill.green { color: var(--good); }
+  .pill.bad   { color: var(--bad); }
+</style>
+</head>
+<body>
+
+<!-- CDN libraries -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/loaders/DRACOLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/loaders/BVHLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/exporters/GLTFExporter.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/kalidokit@1.1.5/dist/kalidokit.umd.js"></script>
+
+<div id="app">
+
+  <!-- ============ LEFT PANEL ============ -->
+  <div id="left">
+
+    <div class="panel">
+      <h3>Mode</h3>
+      <div class="body">
+        <div class="mode-toggle" id="mode-toggle">
+          <label class="active" data-mode="live"><input type="radio" name="mode" value="live" checked/>Live Webcam</label>
+          <label data-mode="video"><input type="radio" name="mode" value="video"/>Pre-recorded Video</label>
+        </div>
+        <div class="hint" id="mode-hint">Live webcam mode. Switch to "Pre-recorded Video" to process saved footage (.mov, .mp4, etc.).</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Model</h3>
+      <div class="body">
+        <input type="file" id="file-model" accept=".glb" />
+        <div class="hint" id="model-info">No model loaded.</div>
+        <hr/>
+        <div class="row">
+          <button id="btn-skel-toggle">Skeleton (S)</button>
+          <button id="btn-axes-toggle">Axes</button>
+        </div>
+        <div class="row">
+          <button id="btn-tpose-character">Force T-Pose</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-webcam">
+      <h3>Webcam / Tracking</h3>
+      <div class="body">
+        <div class="row">
+          <button id="btn-cam-start" class="primary">Start Webcam</button>
+          <button id="btn-cam-stop" disabled>Stop</button>
+        </div>
+        <div class="hint" id="cam-status">Webcam not started.</div>
+        <hr/>
+        <div class="row">
+          <button id="btn-tpose-calib">Capture T-Pose (3s)</button>
+        </div>
+        <div class="hint" id="tpose-status">Not calibrated.</div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-video" style="display:none;">
+      <h3>Video File / Tracking</h3>
+      <div class="body">
+        <input type="file" id="file-video" accept="video/*,.mp4,.mov,.MOV,.webm,.avi,.mkv" />
+        <div class="hint" id="video-info">No video loaded.</div>
+        <hr/>
+        <div class="row">
+          <button id="btn-video-play" class="primary" disabled>Play</button>
+          <button id="btn-video-pause" disabled>Pause</button>
+          <button id="btn-video-step" disabled title="Step ~1 frame (1/30s)">Step &#9655;</button>
+        </div>
+        <div class="row">
+          <input type="range" id="video-scrub" min="0" max="1000" step="1" value="0" style="flex:1;" disabled />
+        </div>
+        <div class="hint" id="video-time">0:00.00 / 0:00.00</div>
+        <div class="row">
+          <label style="min-width:50px;">Speed</label>
+          <select id="video-speed">
+            <option value="0.25">0.25x</option>
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+          </select>
+          <span class="hint" style="margin-left:6px;">Slower = MediaPipe sees every frame.</span>
+        </div>
+        <hr/>
+        <div class="row">
+          <button id="btn-tpose-calib-video">Capture T-Pose (current frame)</button>
+        </div>
+        <div class="hint" id="tpose-status-video">Not calibrated. Scrub to a T-pose frame, then click above.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Recording</h3>
+      <div class="body">
+        <div class="row">
+          <button id="btn-rec-start" class="primary">Start Recording</button>
+          <button id="btn-rec-stop" disabled>Stop</button>
+        </div>
+        <div class="hint" id="rec-status">Idle.</div>
+        <hr/>
+        <div class="row">
+          <button id="btn-autotrim">Auto-trim static</button>
+          <button id="btn-despike">Despike</button>
+        </div>
+        <div class="hint">Auto-trim removes leading/trailing static. Despike flattens single-frame jumps > 60°.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Takes</h3>
+      <div class="body">
+        <div id="takes-list"><div class="hint">No takes yet.</div></div>
+        <hr/>
+        <div class="row">
+          <button id="btn-export-selected" class="primary">Export Selected</button>
+          <button id="btn-verify-reload">Verify Re-load</button>
+        </div>
+        <div class="hint">Only takes graded A/B/C are exported. "Skip" is filtered out.</div>
+      </div>
+    </div>
+
+    <div class="panel collapsed">
+      <h3>Compare (BVH/GLB) <span class="arrow">▶</span></h3>
+      <div class="body">
+        <input type="file" id="file-compare" accept=".glb,.bvh" />
+        <div class="hint" id="compare-status">No reference loaded.</div>
+        <div class="row">
+          <button id="btn-compare-play">Play Both</button>
+          <button id="btn-compare-clear">Clear Reference</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ CENTER VIEW ============ -->
+  <div id="center">
+    <canvas id="three"></canvas>
+    <div id="webcam-preview">
+      <span class="label">Webcam</span>
+      <video id="cam-video" autoplay playsinline muted></video>
+      <canvas id="cam-overlay"></canvas>
+    </div>
+    <div id="video-preview" style="display:none;">
+      <span class="label" id="video-preview-label">Video</span>
+      <video id="video-file" playsinline muted></video>
+      <canvas id="video-overlay"></canvas>
+    </div>
+
+    <div id="timeline">
+      <div class="tl-track" id="tl-track">
+        <div class="tl-region" id="tl-region"></div>
+        <div class="tl-marker in"    id="tl-in"></div>
+        <div class="tl-marker out"   id="tl-out"></div>
+        <div class="tl-marker scrub" id="tl-scrub"></div>
+      </div>
+      <div class="tl-info">
+        <span>Frame: <b id="tl-frame">0</b>/<b id="tl-total">0</b></span>
+        <span>IN: <b id="tl-in-label">0.00s</b> (I)</span>
+        <span>OUT: <b id="tl-out-label">0.00s</b> (O)</span>
+        <span><label><input type="checkbox" id="tl-loop"/> Loop trim</label></span>
+        <span><button id="tl-play">Play</button></span>
+      </div>
+    </div>
+
+    <div id="toast"></div>
+  </div>
+
+  <!-- ============ RIGHT PANEL ============ -->
+  <div id="right">
+
+    <div class="panel">
+      <h3>Bone Rotation HUD</h3>
+      <div class="body" id="bone-hud">
+        <div class="hint">Live Euler degrees. >180 means gimbal flip.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Foot Contact HUD</h3>
+      <div class="body" id="foot-hud">
+        <div class="hint">Y above 0.05m flashes red.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>One Euro Filter</h3>
+      <div class="body">
+        <div class="slider-row">
+          <label>minCutoff</label>
+          <input type="range" id="oe-mincut" min="0.1" max="5" step="0.05" value="1.2"/>
+          <span class="val" id="oe-mincut-val">1.20</span>
+        </div>
+        <div class="slider-row">
+          <label>beta</label>
+          <input type="range" id="oe-beta" min="0" max="1" step="0.005" value="0.08"/>
+          <span class="val" id="oe-beta-val">0.08</span>
+        </div>
+        <div class="slider-row">
+          <label>dCutoff</label>
+          <input type="range" id="oe-dcut" min="0.1" max="5" step="0.05" value="1.0"/>
+          <span class="val" id="oe-dcut-val">1.00</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel collapsed">
+      <h3>Per-Bone Correction (CC5) <span class="arrow">▶</span></h3>
+      <div class="body" id="bone-corrections">
+        <div class="hint">Per-bone Euler corrections. Edits live; access in console via <code>window.boneCorrections</code>.</div>
+        <hr/>
+        <div class="row">
+          <button id="btn-preset-save">Save Preset</button>
+          <button id="btn-preset-load">Load Preset</button>
+          <button id="btn-preset-defaults">Defaults</button>
+        </div>
+        <div class="row">
+          <button id="btn-preset-export">Export JSON</button>
+          <input type="file" id="preset-import" accept=".json" style="font-size:10px;"/>
+        </div>
+        <div id="bone-correct-sliders"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ STATUS BAR ============ -->
+  <div id="statusbar">
+    <div class="stat"><span class="dot green" id="dot-mode"></span><span id="stat-mode">Mode: Live Webcam</span></div>
+    <div class="stat"><span class="dot" id="dot-fps"></span><span>FPS: <b id="stat-fps">--</b></span></div>
+    <div class="stat"><span class="dot" id="dot-track"></span><span>Tracking: <b id="stat-track">off</b></span></div>
+    <div class="stat"><span class="dot" id="dot-cal"></span><span>Calibrated: <b id="stat-cal">No</b></span></div>
+    <div class="stat"><span class="dot" id="dot-rec"></span><span>Frames: <b id="stat-frames">0</b></span></div>
+    <div class="stat"><span class="dot"></span><span>Takes: <b id="stat-takes">0</b></span></div>
+    <div class="stat" style="margin-left:auto;"><span>Hotkeys: 1/2/3=stick figure  S=skeleton  I=in  O=out  Space=play</span></div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+
+/* =============================================================
+   GLOBAL STATE
+============================================================= */
+const APP = {
+  scene: null, camera: null, renderer: null, controls: null,
+  clock: new THREE.Clock(),
+  skeletonHelper: null, showSkeleton: true, showAxes: true,
+  axesHelpers: [],
+  charRoot: null, charMixer: null,
+  charBones: {},        // logical name -> THREE.Bone
+  charBoneRestQuats: {},// logical -> initial local quaternion
+  charBoneRestPos: {},  // logical -> initial local position
+  hipRestY: 0,
+  reference: null,      // comparison character
+  referenceMixer: null,
+
+  holistic: null, cameraMP: null, stream: null,
+  videoEl: null, camOverlayEl: null,
+  trackingOK: false, lostFrames: 0,
+  lastResults: null,
+
+  // Source mode: "live" (webcam) or "video" (pre-recorded file)
+  mode: "live",
+  // Pre-recorded video state
+  videoFile: null,            // File object
+  videoFileUrl: null,         // active blob URL (revoke before reassign)
+  videoFileEl: null,          // <video id="video-file"> element
+  videoOverlayEl: null,       // <canvas id="video-overlay"> element
+  videoRAFId: null,           // requestAnimationFrame id for the video process loop
+  videoIsProcessing: false,   // single-flight guard: skip frames while MediaPipe is busy
+  videoLastSentTime: -1,      // last video.currentTime sent to MediaPipe (re-send on seek)
+
+  calibrationBaseline: null,    // { landmarks, kalidoKitPose }
+  calibrationCapturing: false,
+  calibrationStart: 0,
+  calibrationSamples: [],
+
+  oneEuro: {},          // boneName -> { x:OneEuro, y:.., z:.., w:.. }
+  oneEuroParams: { minCutoff:1.2, beta:0.08, dCutoff:1.0 },
+
+  recording: false,
+  recStart: 0,
+  recFrames: [],         // { t, boneQuats:{name:[x,y,z,w]}, hipPos:[x,y,z] }
+  takes: [],             // { id, name, category, grade, clip, frames, trimIn, trimOut }
+  activeTake: null,      // currently scrubbed/playing take
+  scrubAction: null,
+  scrubTime: 0,
+  scrubPlaying: false,
+  loopTrim: false,
+
+  fpsAccum: 0, fpsFrames: 0, fpsLast: 0,
+};
+window.APP = APP;
+
+/* =============================================================
+   CC5 BONE MAP (logical -> CC5 substring)
+============================================================= */
+const KALIDO_TO_CC5 = {
+  Hips:          ["CC_Base_Hip"],
+  Spine:         ["CC_Base_Spine01"],
+  Chest:         ["CC_Base_Spine02"],
+  Neck:          ["CC_Base_NeckTwist01", "CC_Base_Neck"],
+  Head:          ["CC_Base_Head"],
+  LeftUpperArm:  ["CC_Base_L_Upperarm", "CC_Base_L_UpperArm"],
+  LeftLowerArm:  ["CC_Base_L_Forearm"],
+  LeftHand:      ["CC_Base_L_Hand"],
+  RightUpperArm: ["CC_Base_R_Upperarm", "CC_Base_R_UpperArm"],
+  RightLowerArm: ["CC_Base_R_Forearm"],
+  RightHand:     ["CC_Base_R_Hand"],
+  LeftUpperLeg:  ["CC_Base_L_Thigh"],
+  LeftLowerLeg:  ["CC_Base_L_Calf"],
+  LeftFoot:      ["CC_Base_L_Foot"],
+  RightUpperLeg: ["CC_Base_R_Thigh"],
+  RightLowerLeg: ["CC_Base_R_Calf"],
+  RightFoot:     ["CC_Base_R_Foot"],
+};
+const DRIVEN_BONES = Object.keys(KALIDO_TO_CC5);
+
+const DEFAULT_BONE_CORRECTIONS = {
+  Hips:          { x:0, y:0, z:0 },
+  Spine:         { x:0, y:0, z:0 },
+  Chest:         { x:0, y:0, z:0 },
+  Neck:          { x:0, y:0, z:0 },
+  Head:          { x:0, y:0, z:0 },
+  LeftUpperArm:  { x:0, y:0, z:90 },
+  LeftLowerArm:  { x:0, y:0, z:90 },
+  LeftHand:      { x:0, y:0, z:90 },
+  RightUpperArm: { x:0, y:0, z:-90 },
+  RightLowerArm: { x:0, y:0, z:-90 },
+  RightHand:     { x:0, y:0, z:-90 },
+  LeftUpperLeg:  { x:0, y:0, z:0 },
+  LeftLowerLeg:  { x:0, y:0, z:0 },
+  LeftFoot:      { x:0, y:0, z:0 },
+  RightUpperLeg: { x:0, y:0, z:0 },
+  RightLowerLeg: { x:0, y:0, z:0 },
+  RightFoot:     { x:0, y:0, z:0 },
+};
+window.boneCorrections = JSON.parse(JSON.stringify(DEFAULT_BONE_CORRECTIONS));
+
+/* =============================================================
+   ONE EURO FILTER (per scalar value)
+   Reference: Casiez et al. 2012
+============================================================= */
+class OneEuro {
+  constructor(minCutoff=1.2, beta=0.08, dCutoff=1.0) {
+    this.minCutoff = minCutoff; this.beta = beta; this.dCutoff = dCutoff;
+    this.xPrev = null; this.dxPrev = 0; this.tPrev = null;
+  }
+  _alpha(cutoff, dt) {
+    const r = 2 * Math.PI * cutoff * dt;
+    return r / (r + 1);
+  }
+  filter(x, t) {
+    if (this.tPrev == null) {
+      this.xPrev = x; this.tPrev = t; this.dxPrev = 0;
+      return x;
+    }
+    const dt = Math.max(1e-6, t - this.tPrev);
+    const dx = (x - this.xPrev) / dt;
+    const aD = this._alpha(this.dCutoff, dt);
+    const dxHat = aD * dx + (1 - aD) * this.dxPrev;
+    const cutoff = this.minCutoff + this.beta * Math.abs(dxHat);
+    const a = this._alpha(cutoff, dt);
+    const xHat = a * x + (1 - a) * this.xPrev;
+    this.xPrev = xHat; this.dxPrev = dxHat; this.tPrev = t;
+    return xHat;
+  }
+  reset() { this.xPrev = null; this.tPrev = null; this.dxPrev = 0; }
+}
+
+function getEuroSetForBone(name) {
+  if (!APP.oneEuro[name]) {
+    const p = APP.oneEuroParams;
+    APP.oneEuro[name] = {
+      x: new OneEuro(p.minCutoff, p.beta, p.dCutoff),
+      y: new OneEuro(p.minCutoff, p.beta, p.dCutoff),
+      z: new OneEuro(p.minCutoff, p.beta, p.dCutoff),
+      w: new OneEuro(p.minCutoff, p.beta, p.dCutoff),
+    };
+  }
+  return APP.oneEuro[name];
+}
+function resetAllEuros() {
+  for (const k in APP.oneEuro) {
+    const s = APP.oneEuro[k];
+    s.x.reset(); s.y.reset(); s.z.reset(); s.w.reset();
+  }
+}
+function updateAllEuroParams() {
+  const p = APP.oneEuroParams;
+  for (const k in APP.oneEuro) {
+    const s = APP.oneEuro[k];
+    for (const ax of ["x","y","z","w"]) {
+      s[ax].minCutoff = p.minCutoff;
+      s[ax].beta = p.beta;
+      s[ax].dCutoff = p.dCutoff;
+    }
+  }
+}
+
+/* =============================================================
+   UTIL
+============================================================= */
+function $(id) { return document.getElementById(id); }
+function toast(msg, type) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.className = "visible " + (type || "");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { el.className = ""; }, 3000);
+  console.log("[toast]", msg);
+}
+function deg(r) { return r * 180 / Math.PI; }
+function rad(d) { return d * Math.PI / 180; }
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+function eulerToQuat(xDeg, yDeg, zDeg, order) {
+  const e = new THREE.Euler(rad(xDeg), rad(yDeg), rad(zDeg), order || "XYZ");
+  return new THREE.Quaternion().setFromEuler(e);
+}
+
+/* =============================================================
+   THREE.JS SETUP
+============================================================= */
+function initThree() {
+  const canvas = $("three");
+  APP.renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+  APP.renderer.setPixelRatio(window.devicePixelRatio);
+  APP.renderer.outputEncoding = THREE.sRGBEncoding;
+
+  APP.scene = new THREE.Scene();
+  APP.scene.background = new THREE.Color(0x101216);
+
+  APP.camera = new THREE.PerspectiveCamera(45, 1, 0.05, 200);
+  APP.camera.position.set(2.0, 1.6, 3.0);
+
+  APP.controls = new THREE.OrbitControls(APP.camera, canvas);
+  APP.controls.target.set(0, 1.0, 0);
+  APP.controls.update();
+
+  APP.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+  dir.position.set(2, 4, 3);
+  APP.scene.add(dir);
+
+  const grid = new THREE.GridHelper(10, 20, 0x404040, 0x303030);
+  APP.scene.add(grid);
+
+  // floor reference line at Y=0
+  const floorMat = new THREE.LineBasicMaterial({ color:0x4ec9b0, transparent:true, opacity:0.5 });
+  const fg = new THREE.BufferGeometry();
+  fg.setFromPoints([
+    new THREE.Vector3(-2,0.001, 0), new THREE.Vector3(2, 0.001, 0),
+    new THREE.Vector3( 0,0.001,-2), new THREE.Vector3(0, 0.001, 2),
+  ]);
+  const fl = new THREE.LineSegments(fg, floorMat);
+  APP.scene.add(fl);
+
+  // World axes
+  const worldAxes = new THREE.AxesHelper(0.3);
+  worldAxes.position.set(-1.5, 0.01, -1.5);
+  APP.scene.add(worldAxes);
+
+  window.addEventListener("resize", onResize);
+  onResize();
+
+  // initial render-loop kick
+  APP.clock.start();
+  animate();
+}
+
+function onResize() {
+  const c = $("three");
+  const w = c.clientWidth, h = c.clientHeight;
+  APP.renderer.setSize(w, h, false);
+  APP.camera.aspect = w / h;
+  APP.camera.updateProjectionMatrix();
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = APP.clock.getDelta();
+  if (APP.charMixer) APP.charMixer.update(dt);
+  if (APP.referenceMixer) APP.referenceMixer.update(dt);
+
+  if (APP.activeTake && APP.scrubAction && APP.scrubPlaying) {
+    APP.scrubTime += dt;
+    const inT = APP.activeTake.trimIn, outT = APP.activeTake.trimOut;
+    if (APP.loopTrim) {
+      if (APP.scrubTime > outT) APP.scrubTime = inT;
+    } else if (APP.scrubTime > APP.activeTake.clip.duration) {
+      APP.scrubTime = APP.activeTake.clip.duration;
+      APP.scrubPlaying = false;
+      $("tl-play").textContent = "Play";
+    }
+    APP.scrubAction.time = APP.scrubTime;
+    updateTimelineUI();
+  }
+
+  // foot HUD + bone HUD
+  updateHUDs();
+
+  APP.renderer.render(APP.scene, APP.camera);
+
+  // FPS
+  APP.fpsFrames++;
+  APP.fpsAccum += dt;
+  if (APP.fpsAccum >= 0.5) {
+    const fps = APP.fpsFrames / APP.fpsAccum;
+    $("stat-fps").textContent = fps.toFixed(0);
+    const dot = $("dot-fps");
+    dot.className = "dot " + (fps > 30 ? "green" : fps > 15 ? "yellow" : "red");
+    APP.fpsAccum = 0; APP.fpsFrames = 0;
+  }
+}
+
+/* =============================================================
+   MODEL LOAD
+============================================================= */
+// Shared GLTFLoader + DRACOLoader (needed for the compact UK1 GLB).
+function makeGLTFLoader() {
+  const loader = new THREE.GLTFLoader();
+  try {
+    const draco = new THREE.DRACOLoader();
+    draco.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/");
+    loader.setDRACOLoader(draco);
+  } catch (e) {
+    console.warn("[loader] DRACOLoader not available:", e);
+  }
+  return loader;
+}
+
+$("file-model").addEventListener("change", async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  const loader = makeGLTFLoader();
+  loader.load(url, gltf => {
+    onModelLoaded(gltf, "character");
+    URL.revokeObjectURL(url);
+    toast("Model loaded: " + f.name, "success");
+  }, undefined, err => {
+    toast("Failed to load GLB: " + err.message, "error");
+    console.error(err);
+  });
+});
+
+function onModelLoaded(gltf, slot) {
+  const root = gltf.scene;
+
+  // Auto-scale toward ~1.8m
+  const box = new THREE.Box3().setFromObject(root);
+  const sz = box.getSize(new THREE.Vector3());
+  if (sz.y < 0.5 || sz.y > 3.0) {
+    const s = 1.8 / Math.max(sz.y, 1e-3);
+    root.scale.multiplyScalar(s);
+    box.setFromObject(root);
+  }
+  const newSz = box.getSize(new THREE.Vector3());
+  root.position.y -= box.min.y;  // drop to floor
+
+  if (slot === "character") {
+    if (APP.charRoot) APP.scene.remove(APP.charRoot);
+    APP.charRoot = root;
+    APP.scene.add(root);
+
+    enumerateBones(root);
+    buildSkeletonHelper(root);
+    buildAxesHelpers();
+    buildBoneCorrectionSliders();
+    buildBoneHUD();
+    buildFootHUD();
+    APP.charMixer = new THREE.AnimationMixer(root);
+    $("model-info").innerHTML = `Loaded. Height: ${newSz.y.toFixed(2)}m. Bones: <b>${Object.keys(APP._allBones).length}</b>. Mapped: <b>${Object.keys(APP.charBones).length}/${DRIVEN_BONES.length}</b>`;
+  } else {
+    if (APP.reference) APP.scene.remove(APP.reference);
+    APP.reference = root;
+    root.position.x += 1.5;
+    APP.scene.add(root);
+    APP.referenceMixer = new THREE.AnimationMixer(root);
+    if (gltf.animations && gltf.animations.length) {
+      const action = APP.referenceMixer.clipAction(gltf.animations[0]);
+      action.play();
+    }
+    $("compare-status").textContent = "Reference loaded; " + (gltf.animations?.length || 0) + " clip(s).";
+  }
+}
+
+function enumerateBones(root) {
+  APP._allBones = {};
+  APP.charBones = {};
+  APP.charBoneRestQuats = {};
+  APP.charBoneRestPos = {};
+  root.traverse(o => {
+    if (o.isBone || o.type === "Bone") {
+      APP._allBones[o.name] = o;
+    }
+  });
+  console.log("[bones] total bones:", Object.keys(APP._allBones).length);
+  console.log("[bones] all names:", Object.keys(APP._allBones));
+
+  // Substring match
+  for (const logical of DRIVEN_BONES) {
+    const candidates = KALIDO_TO_CC5[logical];
+    let found = null;
+    for (const sub of candidates) {
+      for (const bname of Object.keys(APP._allBones)) {
+        if (bname.toLowerCase().includes(sub.toLowerCase())) {
+          found = APP._allBones[bname];
+          break;
+        }
+      }
+      if (found) break;
+    }
+    if (found) {
+      APP.charBones[logical] = found;
+      APP.charBoneRestQuats[logical] = found.quaternion.clone();
+      APP.charBoneRestPos[logical]   = found.position.clone();
+      if (logical === "Hips") APP.hipRestY = found.position.y;
+    } else {
+      console.warn("[bones] NOT FOUND for", logical, "candidates:", candidates);
+    }
+  }
+  window.charBones = APP.charBones;
+  window._allBones = APP._allBones;
+  console.log("[bones] mapped:", Object.keys(APP.charBones));
+}
+
+function buildSkeletonHelper(root) {
+  if (APP.skeletonHelper) APP.scene.remove(APP.skeletonHelper);
+  APP.skeletonHelper = new THREE.SkeletonHelper(root);
+  APP.skeletonHelper.material.linewidth = 2;
+  APP.skeletonHelper.visible = APP.showSkeleton;
+  APP.scene.add(APP.skeletonHelper);
+}
+
+function buildAxesHelpers() {
+  for (const h of APP.axesHelpers) {
+    if (h.parent) h.parent.remove(h);
+  }
+  APP.axesHelpers = [];
+  const keyBones = ["Hips", "Chest", "Head", "LeftUpperArm", "RightUpperArm"];
+  for (const k of keyBones) {
+    const b = APP.charBones[k];
+    if (!b) continue;
+    const a = new THREE.AxesHelper(0.15);
+    b.add(a);
+    APP.axesHelpers.push(a);
+  }
+  setAxesVisible(APP.showAxes);
+}
+function setAxesVisible(v) {
+  APP.showAxes = v;
+  for (const a of APP.axesHelpers) a.visible = v;
+}
+
+$("btn-skel-toggle").addEventListener("click", () => {
+  APP.showSkeleton = !APP.showSkeleton;
+  if (APP.skeletonHelper) APP.skeletonHelper.visible = APP.showSkeleton;
+});
+$("btn-axes-toggle").addEventListener("click", () => setAxesVisible(!APP.showAxes));
+$("btn-tpose-character").addEventListener("click", () => {
+  for (const k in APP.charBoneRestQuats) {
+    APP.charBones[k].quaternion.copy(APP.charBoneRestQuats[k]);
+  }
+  toast("Forced rest pose on character.", "");
+});
+
+/* =============================================================
+   MEDIAPIPE — shared init/teardown (used by both webcam and video)
+============================================================= */
+function initHolistic() {
+  if (APP.holistic) return APP.holistic;
+  APP.holistic = new Holistic({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}`,
+  });
+  APP.holistic.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    enableSegmentation: false,
+    refineFaceLandmarks: false,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  });
+  APP.holistic.onResults(onHolisticResults);
+  return APP.holistic;
+}
+
+function teardownHolistic() {
+  if (APP.holistic) { try { APP.holistic.close(); } catch(e){} APP.holistic = null; }
+  APP.trackingOK = false;
+  APP.lostFrames = 0;
+  $("stat-track").textContent = "off";
+  $("dot-track").className = "dot";
+}
+
+/* =============================================================
+   WEBCAM (LIVE MODE)
+============================================================= */
+async function startWebcam() {
+  if (APP.stream) return;
+  if (APP.mode !== "live") { toast("Switch to Live Webcam mode first.", "error"); return; }
+  try {
+    APP.stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, facingMode: "user" }, audio: false,
+    });
+  } catch (e) {
+    toast("getUserMedia failed: " + e.message, "error");
+    console.error(e);
+    return;
+  }
+  APP.videoEl = $("cam-video");
+  APP.videoEl.srcObject = APP.stream;
+  await APP.videoEl.play().catch(()=>{});
+
+  APP.camOverlayEl = $("cam-overlay");
+  APP.camOverlayEl.width = 320; APP.camOverlayEl.height = 240;
+
+  initHolistic();
+
+  APP.cameraMP = new Camera(APP.videoEl, {
+    onFrame: async () => {
+      if (APP.holistic && APP.mode === "live") await APP.holistic.send({ image: APP.videoEl });
+    },
+    width: 640, height: 480,
+  });
+  APP.cameraMP.start();
+
+  $("btn-cam-start").disabled = true;
+  $("btn-cam-stop").disabled = false;
+  $("cam-status").textContent = "Webcam running.";
+  toast("Webcam started.", "success");
+}
+
+function stopWebcam() {
+  if (APP.cameraMP) { try { APP.cameraMP.stop(); } catch(e){} APP.cameraMP = null; }
+  teardownHolistic();
+  if (APP.stream) {
+    APP.stream.getTracks().forEach(t => t.stop());
+    APP.stream = null;
+  }
+  if (APP.videoEl) {
+    try { APP.videoEl.srcObject = null; } catch(e) {}
+  }
+  $("btn-cam-start").disabled = false;
+  $("btn-cam-stop").disabled = true;
+  $("cam-status").textContent = "Webcam stopped.";
+}
+
+$("btn-cam-start").addEventListener("click", startWebcam);
+$("btn-cam-stop").addEventListener("click", stopWebcam);
+
+/* =============================================================
+   VIDEO FILE (PRE-RECORDED MODE)
+
+   MediaPipe Holistic's `send({ image: ... })` accepts any element with
+   videoWidth / videoHeight. We bypass the @mediapipe Camera utility
+   (webcam-only) and drive the pipeline ourselves from requestAnimationFrame.
+
+   - When the video is playing, we send the current frame as fast as
+     MediaPipe can keep up (single-flight via videoIsProcessing flag —
+     drop frames rather than queue them).
+   - When the video is paused, we only re-send if currentTime changed
+     (i.e. user scrubbed) OR if we're actively capturing a T-pose sample.
+   - When the video ends, recording auto-stops.
+============================================================= */
+function loadVideoFile(file) {
+  if (!file) return;
+  // Revoke previous object URL to avoid leaks (videos are 1-1.5GB each)
+  if (APP.videoFileUrl) {
+    try { URL.revokeObjectURL(APP.videoFileUrl); } catch(e){}
+    APP.videoFileUrl = null;
+  }
+  APP.videoFile = file;
+  APP.videoFileUrl = URL.createObjectURL(file);
+  const v = APP.videoFileEl;
+  v.src = APP.videoFileUrl;
+  v.load();
+  v.addEventListener("loadedmetadata", onVideoMetadataLoaded, { once: true });
+  $("video-info").textContent = `Loading: ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)...`;
+}
+
+function onVideoMetadataLoaded() {
+  const v = APP.videoFileEl;
+  // size the overlay canvas to match the video aspect ratio of the preview box
+  APP.videoOverlayEl.width = 320;
+  APP.videoOverlayEl.height = 240;
+  const dur = v.duration || 0;
+  $("video-info").innerHTML = `<b>${APP.videoFile ? APP.videoFile.name : "video"}</b><br>` +
+    `${v.videoWidth}x${v.videoHeight} &middot; ${formatTime(dur)} &middot; ${(APP.videoFile.size/1024/1024).toFixed(1)} MB`;
+  $("video-scrub").disabled = false;
+  $("video-scrub").value = 0;
+  $("btn-video-play").disabled = false;
+  $("btn-video-pause").disabled = false;
+  $("btn-video-step").disabled = false;
+  $("video-preview-label").textContent = "Video: " + (APP.videoFile ? APP.videoFile.name : "");
+  updateModeStatus();
+  updateVideoTimeLabel();
+  // Force first-frame processing once metadata + a frame is ready
+  APP.videoLastSentTime = -1;
+}
+
+function startVideoTracking() {
+  if (APP.mode !== "video") return;
+  initHolistic();
+  if (APP.videoRAFId == null) {
+    APP.videoIsProcessing = false;
+    APP.videoLastSentTime = -1;
+    APP.videoRAFId = requestAnimationFrame(videoProcessLoop);
+  }
+}
+
+function stopVideoTracking() {
+  if (APP.videoRAFId != null) {
+    cancelAnimationFrame(APP.videoRAFId);
+    APP.videoRAFId = null;
+  }
+  teardownHolistic();
+}
+
+async function videoProcessLoop() {
+  APP.videoRAFId = null;
+  if (APP.mode !== "video" || !APP.holistic) return;
+  const v = APP.videoFileEl;
+  if (v && v.readyState >= 2 && !APP.videoIsProcessing) {
+    const playing = !v.paused && !v.ended;
+    const seeked = v.currentTime !== APP.videoLastSentTime;
+    const calibrating = APP.calibrationCapturing;
+    if (playing || seeked || calibrating) {
+      APP.videoIsProcessing = true;
+      APP.videoLastSentTime = v.currentTime;
+      try {
+        await APP.holistic.send({ image: v });
+      } catch (e) {
+        console.warn("[video] holistic.send failed:", e);
+      }
+      APP.videoIsProcessing = false;
+    }
+  }
+  // Schedule next iteration only if still in video mode
+  if (APP.mode === "video") {
+    APP.videoRAFId = requestAnimationFrame(videoProcessLoop);
+  }
+}
+
+function formatTime(s) {
+  if (!isFinite(s)) return "0:00.00";
+  const m = Math.floor(s / 60);
+  const sec = s - m * 60;
+  return `${m}:${sec.toFixed(2).padStart(5, "0")}`;
+}
+
+function updateVideoTimeLabel() {
+  const v = APP.videoFileEl;
+  if (!v) return;
+  $("video-time").textContent = `${formatTime(v.currentTime)} / ${formatTime(v.duration || 0)}`;
+  const sc = $("video-scrub");
+  if (!sc.disabled && v.duration) {
+    sc.value = Math.round((v.currentTime / v.duration) * 1000);
+  }
+}
+
+/* =============================================================
+   MODE SWITCHING
+============================================================= */
+function setMode(newMode) {
+  if (newMode !== "live" && newMode !== "video") return;
+  if (APP.mode === newMode) return;
+
+  // Stop whatever the current mode is doing
+  if (APP.mode === "live") {
+    stopWebcam();
+  } else if (APP.mode === "video") {
+    // Pause the video, stop the MediaPipe loop
+    const v = APP.videoFileEl;
+    if (v) { try { v.pause(); } catch(e){} }
+    stopVideoTracking();
+  }
+
+  APP.mode = newMode;
+
+  // Update mode-toggle visual state
+  document.querySelectorAll("#mode-toggle label").forEach(lbl => {
+    lbl.classList.toggle("active", lbl.dataset.mode === newMode);
+  });
+  document.querySelectorAll('#mode-toggle input[type="radio"]').forEach(r => {
+    r.checked = (r.value === newMode);
+  });
+
+  // Show/hide the panels and previews
+  $("panel-webcam").style.display = (newMode === "live") ? "" : "none";
+  $("panel-video").style.display  = (newMode === "video") ? "" : "none";
+  $("webcam-preview").style.display = (newMode === "live") ? "" : "none";
+  $("video-preview").style.display  = (newMode === "video") ? "" : "none";
+
+  // If switching to video and a file was already loaded, restart the MediaPipe loop
+  if (newMode === "video" && APP.videoFile) {
+    startVideoTracking();
+  }
+
+  // Reset the smoothing filters — different source has different noise characteristics
+  resetAllEuros();
+
+  updateModeStatus();
+  $("mode-hint").textContent = (newMode === "live")
+    ? "Live webcam mode. Switch to \"Pre-recorded Video\" to process saved footage."
+    : "Pre-recorded video mode. Pick a .mov/.mp4 below, scrub to a T-pose frame, calibrate, then play & record.";
+  toast("Mode: " + (newMode === "live" ? "Live Webcam" : "Pre-recorded Video"), "");
+}
+
+function updateModeStatus() {
+  const s = $("stat-mode");
+  if (!s) return;
+  if (APP.mode === "live") {
+    s.textContent = "Mode: Live Webcam";
+  } else {
+    const fn = APP.videoFile ? APP.videoFile.name : "(no file)";
+    s.textContent = "Mode: Video — " + fn;
+  }
+}
+
+// Wire the mode toggle
+document.querySelectorAll('#mode-toggle input[type="radio"]').forEach(r => {
+  r.addEventListener("change", () => { if (r.checked) setMode(r.value); });
+});
+document.querySelectorAll('#mode-toggle label').forEach(lbl => {
+  lbl.addEventListener("click", () => setMode(lbl.dataset.mode));
+});
+
+// Wire the video file picker + controls (the DOM elements need to exist; we bind once at boot)
+function bindVideoControls() {
+  APP.videoFileEl    = $("video-file");
+  APP.videoOverlayEl = $("video-overlay");
+  if (!APP.videoFileEl) return;
+
+  $("file-video").addEventListener("change", e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    loadVideoFile(f);
+    // If we're already in video mode, kick off the MediaPipe loop
+    if (APP.mode === "video") startVideoTracking();
+  });
+
+  $("btn-video-play").addEventListener("click", () => {
+    const v = APP.videoFileEl;
+    if (!v.src) { toast("Pick a video file first.", "error"); return; }
+    v.play().catch(err => toast("Video play failed: " + err.message, "error"));
+  });
+  $("btn-video-pause").addEventListener("click", () => {
+    if (APP.videoFileEl) APP.videoFileEl.pause();
+  });
+  $("btn-video-step").addEventListener("click", () => {
+    const v = APP.videoFileEl;
+    if (!v || !v.src) return;
+    v.pause();
+    v.currentTime = Math.min(v.duration || 0, v.currentTime + (1/30));
+  });
+  $("video-scrub").addEventListener("input", e => {
+    const v = APP.videoFileEl;
+    if (!v || !v.duration) return;
+    const frac = parseInt(e.target.value, 10) / 1000;
+    v.currentTime = frac * v.duration;
+  });
+  $("video-speed").addEventListener("change", e => {
+    if (APP.videoFileEl) APP.videoFileEl.playbackRate = parseFloat(e.target.value);
+  });
+
+  // Reflect playback state in the buttons
+  APP.videoFileEl.addEventListener("play",  () => updateVideoTimeLabel());
+  APP.videoFileEl.addEventListener("pause", () => updateVideoTimeLabel());
+  APP.videoFileEl.addEventListener("timeupdate", () => updateVideoTimeLabel());
+  APP.videoFileEl.addEventListener("seeked", () => {
+    updateVideoTimeLabel();
+    // Force a re-send on next loop iteration
+    APP.videoLastSentTime = -1;
+  });
+  APP.videoFileEl.addEventListener("ended", () => {
+    updateVideoTimeLabel();
+    if (APP.recording) {
+      toast("Video ended — auto-stopping recording.", "");
+      stopRecording();
+    }
+  });
+
+  // Per-frame T-pose calibration in video mode: capture a single sample from the current frame
+  $("btn-tpose-calib-video").addEventListener("click", () => {
+    if (APP.mode !== "video") { toast("Switch to video mode first.", "error"); return; }
+    if (!APP.videoFile) { toast("Load a video file first.", "error"); return; }
+    if (!APP.holistic) { startVideoTracking(); }
+    // We mimic the webcam 3-second window so the existing finalizeCalibration() runs.
+    // In video mode, if paused, the rAF loop will keep re-sending the same frame because
+    // calibrationCapturing forces re-send. If playing, samples are spread across frames.
+    APP.calibrationCapturing = true;
+    APP.calibrationStart = performance.now();
+    APP.calibrationSamples = [];
+    $("tpose-status-video").textContent = "Capturing T-pose from current frame... (3s)";
+    // Nudge: if paused, force a re-send by clearing last sent time
+    APP.videoLastSentTime = -1;
+  });
+}
+
+function onHolisticResults(res) {
+  APP.lastResults = res;
+
+  // Pick the right overlay + source video for the current mode
+  const overlay = (APP.mode === "video") ? APP.videoOverlayEl : APP.camOverlayEl;
+  const sourceVideo = (APP.mode === "video") ? APP.videoFileEl : APP.videoEl;
+
+  // draw mini overlay (skeleton dots)
+  if (overlay) {
+    const ctx = overlay.getContext("2d");
+    ctx.clearRect(0,0,overlay.width,overlay.height);
+    ctx.strokeStyle = "#4ec9b0"; ctx.lineWidth = 2;
+    if (res.poseLandmarks) {
+      ctx.fillStyle = "#4ec9b0";
+      for (const lm of res.poseLandmarks) {
+        ctx.beginPath();
+        ctx.arc(lm.x * overlay.width, lm.y * overlay.height, 2, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+
+  const haveBody = !!(res.poseLandmarks && res.poseWorldLandmarks);
+  if (haveBody) {
+    APP.trackingOK = true; APP.lostFrames = 0;
+    $("stat-track").textContent = "OK";
+    $("dot-track").className = "dot green";
+  } else {
+    APP.lostFrames++;
+    APP.trackingOK = false;
+    $("stat-track").textContent = "lost (" + APP.lostFrames + ")";
+    $("dot-track").className = "dot red";
+    return;
+  }
+
+  // T-pose calibration sample collection
+  if (APP.calibrationCapturing) {
+    APP.calibrationSamples.push({
+      pose: res.poseLandmarks,
+      poseWorld: res.poseWorldLandmarks,
+    });
+    const elapsed = (performance.now() - APP.calibrationStart) / 1000;
+    const msg = `Capturing... ${elapsed.toFixed(1)}s / 3.0s (samples ${APP.calibrationSamples.length})`;
+    const statusEl = (APP.mode === "video") ? $("tpose-status-video") : $("tpose-status");
+    if (statusEl) statusEl.textContent = msg;
+    if (elapsed >= 3.0) finalizeCalibration();
+  }
+
+  // Drive character
+  let pose;
+  try {
+    pose = Kalidokit.Pose.solve(res.poseWorldLandmarks, res.poseLandmarks, {
+      runtime: "mediapipe",
+      video: sourceVideo,
+      enableLegs: true,
+    });
+  } catch (e) {
+    console.warn("[kalido] solve fail:", e);
+    return;
+  }
+  if (!pose) return;
+  driveCharacterFromPose(pose);
+
+  // Update diagnostic stick figure (raw MediaPipe landmarks)
+  updateStickFigure(res.poseWorldLandmarks);
+
+  // Record
+  if (APP.recording) recordFrame();
+}
+
+function finalizeCalibration() {
+  APP.calibrationCapturing = false;
+  if (APP.calibrationSamples.length === 0) {
+    toast("No T-pose samples captured.", "error");
+    return;
+  }
+  // Compute solved baseline from last sample (steady at end is best)
+  const last = APP.calibrationSamples[APP.calibrationSamples.length - 1];
+  const srcVid = (APP.mode === "video") ? APP.videoFileEl : APP.videoEl;
+  let baselinePose = null;
+  try {
+    baselinePose = Kalidokit.Pose.solve(last.poseWorld, last.pose, {
+      runtime: "mediapipe", video: srcVid, enableLegs: true,
+    });
+  } catch (e) {}
+  APP.calibrationBaseline = {
+    landmarks: last.pose,
+    kalidoKitPose: baselinePose,
+  };
+  const okMsg = "<span style='color:var(--good)'>&#10004; T-pose calibrated</span>";
+  $("tpose-status").innerHTML = okMsg;
+  const vidStatus = $("tpose-status-video");
+  if (vidStatus) vidStatus.innerHTML = okMsg;
+  $("stat-cal").textContent = "Yes";
+  $("dot-cal").className = "dot green";
+  toast("T-pose calibrated.", "success");
+}
+
+$("btn-tpose-calib").addEventListener("click", () => {
+  if (!APP.holistic) { toast("Start webcam first.", "error"); return; }
+  APP.calibrationCapturing = true;
+  APP.calibrationStart = performance.now();
+  APP.calibrationSamples = [];
+  $("tpose-status").textContent = "Stand in T-pose, hold 3 seconds...";
+});
+
+/* =============================================================
+   CHARACTER DRIVING (KalidoKit → CC5)
+   For each bone: applied = correction * (kalidoQuat - baselineQuat) * inverseCorrection * restQuat
+   We compute kalidoDelta from solved pose, filtered through one-euro.
+============================================================= */
+const _tmpQ = new THREE.Quaternion();
+const _tmpQ2 = new THREE.Quaternion();
+const _baselineQ = new THREE.Quaternion();
+
+function poseBoneRotToQuat(rot) {
+  if (!rot) return null;
+  // Kalidokit returns Euler radians (x,y,z) for body bones
+  const e = new THREE.Euler(rot.x || 0, rot.y || 0, rot.z || 0, "XYZ");
+  return new THREE.Quaternion().setFromEuler(e);
+}
+
+function getBaselineQuatForBone(logical) {
+  if (!APP.calibrationBaseline || !APP.calibrationBaseline.kalidoKitPose) return new THREE.Quaternion();
+  const base = APP.calibrationBaseline.kalidoKitPose;
+  const r = base[logical] || (base.RightUpperArm && base.RightUpperArm.r) || null;
+  // KalidoKit pose object uses keys like LeftUpperArm with .x,.y,.z (radians)
+  const bq = poseBoneRotToQuat(base[logical]);
+  return bq || new THREE.Quaternion();
+}
+
+function driveCharacterFromPose(pose) {
+  if (!APP.charRoot) return;
+  const t = performance.now() / 1000.0;
+
+  for (const logical of DRIVEN_BONES) {
+    const bone = APP.charBones[logical];
+    if (!bone) continue;
+    const rot = pose[logical];
+    if (!rot) continue;
+
+    // raw quat from KalidoKit
+    let kQuat = poseBoneRotToQuat(rot);
+
+    // subtract baseline (delta from T-pose) — kQuat * inverse(baseline)
+    if (APP.calibrationBaseline && APP.calibrationBaseline.kalidoKitPose) {
+      const b = getBaselineQuatForBone(logical);
+      _baselineQ.copy(b).invert();
+      kQuat.multiply(_baselineQ);
+    }
+
+    // one euro filter on quaternion components
+    const euro = getEuroSetForBone(logical);
+    const fx = euro.x.filter(kQuat.x, t);
+    const fy = euro.y.filter(kQuat.y, t);
+    const fz = euro.z.filter(kQuat.z, t);
+    const fw = euro.w.filter(kQuat.w, t);
+    kQuat.set(fx, fy, fz, fw).normalize();
+
+    // correction quaternion (Euler XYZ in degrees)
+    const corr = window.boneCorrections[logical] || {x:0,y:0,z:0};
+    const corrQ = eulerToQuat(corr.x, corr.y, corr.z, "XYZ");
+    _tmpQ.copy(corrQ).invert();        // inverse correction
+
+    // applied = corr * kQuat * inv(corr)
+    const applied = corrQ.clone().multiply(kQuat).multiply(_tmpQ);
+
+    // compose against rest local quaternion: applied * rest
+    const restQ = APP.charBoneRestQuats[logical];
+    if (restQ) {
+      _tmpQ2.copy(restQ);
+      bone.quaternion.copy(applied).multiply(_tmpQ2);
+    } else {
+      bone.quaternion.copy(applied);
+    }
+  }
+
+  // hip position offset (very gentle, optional vertical/lateral) — kalidokit poseWorld doesn't always emit; we use pose.Hips.position if present
+  // Most builds expose pose.Hips.position {x,y,z} normalized
+  if (pose.Hips && pose.Hips.position && APP.charBones.Hips) {
+    const hp = pose.Hips.position;
+    const hipBone = APP.charBones.Hips;
+    const rest = APP.charBoneRestPos.Hips;
+    // gentle scale
+    hipBone.position.x = rest.x + (hp.x || 0) * 0.3;
+    hipBone.position.z = rest.z + (hp.z || 0) * 0.3;
+    // Y: kalido reports tilt, often noisy. Optional:
+    // hipBone.position.y = rest.y + (hp.y || 0) * 0.1;
+  }
+}
+
+/* =============================================================
+   RECORDING
+
+   Timestamp source depends on mode:
+   - Live webcam: wall-clock via performance.now()
+   - Pre-recorded video: video.currentTime, so the exported clip duration
+     matches the original real-world action speed regardless of playback
+     rate (0.25x / 0.5x / 1x). This means slow-mo playback for accurate
+     MediaPipe inference still produces a clip that plays at real speed.
+============================================================= */
+function recordFrame() {
+  let t;
+  if (APP.mode === "video" && APP.videoFileEl) {
+    t = APP.videoFileEl.currentTime - APP.recStartVideo;
+    if (t < 0) t = 0;
+  } else {
+    t = (performance.now() - APP.recStart) / 1000.0;
+  }
+  // Enforce strictly-increasing timestamps so QuaternionKeyframeTrack accepts them
+  if (APP.recFrames.length > 0) {
+    const prev = APP.recFrames[APP.recFrames.length - 1].t;
+    if (t <= prev) t = prev + 1e-4;
+  }
+  const frame = { t, q:{}, hipPos:null };
+  for (const logical of DRIVEN_BONES) {
+    const b = APP.charBones[logical];
+    if (!b) continue;
+    frame.q[logical] = [b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w];
+  }
+  if (APP.charBones.Hips) {
+    const h = APP.charBones.Hips;
+    frame.hipPos = [h.position.x, h.position.y, h.position.z];
+  }
+  APP.recFrames.push(frame);
+  $("stat-frames").textContent = APP.recFrames.length;
+}
+
+function startRecording() {
+  if (!APP.charRoot) { toast("Load a character first.", "error"); return; }
+  if (APP.recording) return;
+  if (!APP.calibrationBaseline) {
+    if (!confirm("Not calibrated. Recording will use raw KalidoKit. Continue?")) return;
+  }
+  APP.recording = true;
+  APP.recStart = performance.now();
+  APP.recStartVideo = (APP.mode === "video" && APP.videoFileEl) ? APP.videoFileEl.currentTime : 0;
+  APP.recFrames = [];
+  $("btn-rec-start").classList.add("recording");
+  $("btn-rec-start").disabled = true;
+  $("btn-rec-stop").disabled = false;
+  $("rec-status").textContent = "Recording...";
+  $("dot-rec").className = "dot red";
+}
+
+function stopRecording() {
+  if (!APP.recording) return;
+  APP.recording = false;
+  $("btn-rec-start").classList.remove("recording");
+  $("btn-rec-start").disabled = false;
+  $("btn-rec-stop").disabled = true;
+  $("dot-rec").className = "dot";
+
+  const nFrames = APP.recFrames.length;
+  if (nFrames < 2) {
+    toast("Too few frames captured (" + nFrames + ").", "error");
+    $("rec-status").textContent = "Discarded (too short).";
+    return;
+  }
+
+  const take = buildTakeFromFrames(APP.recFrames);
+  APP.takes.push(take);
+  APP.activeTake = take;
+  renderTakesList();
+  $("rec-status").textContent = `Captured ${nFrames} frames, ${take.clip.duration.toFixed(2)}s.`;
+  $("stat-takes").textContent = APP.takes.length;
+  showTimelineForTake(take);
+  toast(`Take ${take.name} saved: ${take.clip.duration.toFixed(2)}s, ${nFrames} frames.`, "success");
+}
+
+$("btn-rec-start").addEventListener("click", startRecording);
+$("btn-rec-stop").addEventListener("click", stopRecording);
+
+function buildTakeFromFrames(frames) {
+  const id = APP.takes.length + 1;
+  const name = "take_" + String(id).padStart(3, "0");
+  const times = frames.map(f => f.t);
+  const duration = times[times.length - 1] - times[0];
+  // re-zero
+  const t0 = times[0];
+  const zTimes = times.map(t => t - t0);
+
+  const tracks = [];
+  for (const logical of DRIVEN_BONES) {
+    const bone = APP.charBones[logical];
+    if (!bone) continue;
+    const values = [];
+    let hasData = false;
+    for (const f of frames) {
+      const q = f.q[logical];
+      if (q) { values.push(q[0], q[1], q[2], q[3]); hasData = true; }
+      else   { values.push(0,0,0,1); }
+    }
+    if (!hasData) continue;
+    const trk = new THREE.QuaternionKeyframeTrack(
+      bone.name + ".quaternion",
+      zTimes, values
+    );
+    tracks.push(trk);
+  }
+
+  // Hip position track
+  if (APP.charBones.Hips && frames.some(f => f.hipPos)) {
+    const hipBoneName = APP.charBones.Hips.name;
+    const vals = [];
+    for (const f of frames) {
+      const p = f.hipPos || [0, APP.hipRestY, 0];
+      vals.push(p[0], p[1], p[2]);
+    }
+    const trk = new THREE.VectorKeyframeTrack(hipBoneName + ".position", zTimes, vals);
+    tracks.push(trk);
+  }
+
+  const clip = new THREE.AnimationClip(name, duration, tracks);
+  return {
+    id, name, category:"Jab", grade:"B",
+    clip, frames: frames.map(f => ({...f, t: f.t - t0})),
+    trimIn: 0, trimOut: duration,
+  };
+}
+
+function renderTakesList() {
+  const div = $("takes-list");
+  if (!APP.takes.length) { div.innerHTML = '<div class="hint">No takes yet.</div>'; return; }
+  div.innerHTML = "";
+  for (const tk of APP.takes) {
+    const el = document.createElement("div");
+    el.className = "take-item" + (APP.activeTake === tk ? " selected" : "");
+    el.innerHTML = `
+      <div class="take-row">
+        <label>Name</label>
+        <input type="text" value="${tk.name}" data-field="name"/>
+      </div>
+      <div class="take-row">
+        <label>Cat</label>
+        <select data-field="category">
+          ${["Jab","Cross","Hook","Uppercut","Idle","Footwork","Combo","Other"].map(c =>
+            `<option value="${c}" ${c===tk.category?"selected":""}>${c}</option>`).join("")}
+        </select>
+        <label>Grade</label>
+        <select data-field="grade">
+          ${["A","B","C","Skip"].map(g =>
+            `<option value="${g}" ${g===tk.grade?"selected":""}>${g}</option>`).join("")}
+        </select>
+      </div>
+      <div class="take-row">
+        <span class="take-status">Dur: ${tk.clip.duration.toFixed(2)}s | Trim: ${tk.trimIn.toFixed(2)}-${tk.trimOut.toFixed(2)}s | Frames: ${tk.frames.length}</span>
+      </div>
+      <div class="take-row">
+        <button data-act="select">Scrub</button>
+        <button data-act="export">Export</button>
+        <button data-act="delete" class="danger">Del</button>
+      </div>`;
+    el.querySelectorAll("input,select").forEach(inp => {
+      inp.addEventListener("change", ev => {
+        tk[inp.dataset.field] = inp.value;
+      });
+    });
+    el.querySelectorAll("button").forEach(btn => {
+      btn.addEventListener("click", ev => {
+        const act = btn.dataset.act;
+        if (act === "select") { APP.activeTake = tk; showTimelineForTake(tk); renderTakesList(); }
+        else if (act === "export") { exportTake(tk); }
+        else if (act === "delete") {
+          if (confirm("Delete " + tk.name + "?")) {
+            APP.takes = APP.takes.filter(t => t !== tk);
+            if (APP.activeTake === tk) { APP.activeTake = null; hideTimeline(); }
+            renderTakesList();
+            $("stat-takes").textContent = APP.takes.length;
+          }
+        }
+      });
+    });
+    div.appendChild(el);
+  }
+}
+
+/* =============================================================
+   TIMELINE / SCRUB / TRIM
+============================================================= */
+function showTimelineForTake(tk) {
+  $("timeline").classList.add("visible");
+  $("tl-total").textContent = tk.frames.length;
+  if (APP.scrubAction) APP.scrubAction.stop();
+  // Use mixer to play clip on character
+  APP.charMixer.stopAllAction();
+  APP.scrubAction = APP.charMixer.clipAction(tk.clip);
+  APP.scrubAction.play();
+  APP.scrubAction.paused = true;
+  APP.scrubTime = tk.trimIn;
+  APP.scrubAction.time = APP.scrubTime;
+  APP.scrubPlaying = false;
+  $("tl-play").textContent = "Play";
+  updateTimelineUI();
+}
+
+function hideTimeline() {
+  $("timeline").classList.remove("visible");
+  if (APP.scrubAction) { APP.scrubAction.stop(); APP.scrubAction = null; }
+}
+
+function updateTimelineUI() {
+  const tk = APP.activeTake;
+  if (!tk) return;
+  const dur = tk.clip.duration || 1e-6;
+  const w = $("tl-track").clientWidth;
+  const xScrub = (APP.scrubTime / dur) * w;
+  const xIn = (tk.trimIn / dur) * w;
+  const xOut = (tk.trimOut / dur) * w;
+  $("tl-scrub").style.left = xScrub + "px";
+  $("tl-in").style.left = xIn + "px";
+  $("tl-out").style.left = xOut + "px";
+  $("tl-region").style.left = xIn + "px";
+  $("tl-region").style.width = Math.max(0, xOut - xIn) + "px";
+  $("tl-in-label").textContent = tk.trimIn.toFixed(2) + "s";
+  $("tl-out-label").textContent = tk.trimOut.toFixed(2) + "s";
+  const frameIdx = Math.round((APP.scrubTime / dur) * (tk.frames.length - 1));
+  $("tl-frame").textContent = frameIdx;
+}
+
+$("tl-track").addEventListener("mousedown", e => {
+  if (!APP.activeTake) return;
+  const onMove = ev => {
+    const rect = $("tl-track").getBoundingClientRect();
+    const x = clamp(ev.clientX - rect.left, 0, rect.width);
+    APP.scrubTime = (x / rect.width) * APP.activeTake.clip.duration;
+    if (APP.scrubAction) APP.scrubAction.time = APP.scrubTime;
+    updateTimelineUI();
+  };
+  onMove(e);
+  const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+});
+
+$("tl-play").addEventListener("click", () => {
+  APP.scrubPlaying = !APP.scrubPlaying;
+  $("tl-play").textContent = APP.scrubPlaying ? "Pause" : "Play";
+  if (APP.scrubAction) APP.scrubAction.paused = !APP.scrubPlaying;
+});
+$("tl-loop").addEventListener("change", e => { APP.loopTrim = e.target.checked; });
+
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
+  const k = e.key.toLowerCase();
+  if (k === "s") {
+    APP.showSkeleton = !APP.showSkeleton;
+    if (APP.skeletonHelper) APP.skeletonHelper.visible = APP.showSkeleton;
+  } else if (k === "i" && APP.activeTake) {
+    APP.activeTake.trimIn = clamp(APP.scrubTime, 0, APP.activeTake.trimOut - 0.01);
+    updateTimelineUI(); renderTakesList();
+  } else if (k === "o" && APP.activeTake) {
+    APP.activeTake.trimOut = clamp(APP.scrubTime, APP.activeTake.trimIn + 0.01, APP.activeTake.clip.duration);
+    updateTimelineUI(); renderTakesList();
+  } else if (e.code === "Space") {
+    e.preventDefault();
+    $("tl-play").click();
+  }
+});
+
+/* =============================================================
+   AUTO-TRIM + DESPIKE
+============================================================= */
+function autoTrim() {
+  const tk = APP.activeTake;
+  if (!tk) { toast("Select a take first.", "error"); return; }
+  const frames = tk.frames;
+  if (frames.length < 4) return;
+
+  // compute per-frame rotational delta (sum across driven bones)
+  function frameDelta(i) {
+    const a = frames[i].q, b = frames[i-1].q;
+    let sum = 0;
+    for (const k in a) {
+      const qa = a[k], qb = b[k];
+      const dot = qa[0]*qb[0]+qa[1]*qb[1]+qa[2]*qb[2]+qa[3]*qb[3];
+      sum += 1 - Math.abs(clamp(dot, -1, 1));
+    }
+    return sum;
+  }
+  const deltas = [];
+  for (let i=1;i<frames.length;i++) deltas.push(frameDelta(i));
+
+  const motionThresh = 0.05;     // tweak
+  const stillSecThresh = 0.5;
+  const fps = Math.max(15, frames.length / tk.clip.duration);
+  const stillFramesThresh = stillSecThresh * fps;
+
+  // leading static
+  let i0 = 0;
+  while (i0 < deltas.length && deltas[i0] < motionThresh) i0++;
+  // trailing
+  let i1 = deltas.length - 1;
+  while (i1 > i0 && deltas[i1] < motionThresh) i1--;
+  if (i1 - i0 < stillFramesThresh) {
+    toast("Auto-trim: not enough motion detected, no trim applied.", "");
+    return;
+  }
+  const inT = frames[i0].t;
+  const outT = frames[i1+1] ? frames[i1+1].t : tk.clip.duration;
+  tk.trimIn = inT; tk.trimOut = outT;
+  updateTimelineUI(); renderTakesList();
+  toast(`Auto-trimmed: IN ${inT.toFixed(2)}s, OUT ${outT.toFixed(2)}s.`, "success");
+}
+$("btn-autotrim").addEventListener("click", autoTrim);
+
+function despike() {
+  const tk = APP.activeTake;
+  if (!tk) { toast("Select a take first.", "error"); return; }
+  const frames = tk.frames;
+  if (frames.length < 3) return;
+  const angThresh = rad(60);
+  let fixed = 0;
+  for (const k of DRIVEN_BONES) {
+    for (let i=1; i<frames.length-1; i++) {
+      const a = frames[i-1].q[k], b = frames[i].q[k], c = frames[i+1].q[k];
+      if (!a || !b || !c) continue;
+      const dot1 = Math.abs(a[0]*b[0]+a[1]*b[1]+a[2]*b[2]+a[3]*b[3]);
+      const dot2 = Math.abs(b[0]*c[0]+b[1]*c[1]+b[2]*c[2]+b[3]*c[3]);
+      const dotSkip = Math.abs(a[0]*c[0]+a[1]*c[1]+a[2]*c[2]+a[3]*c[3]);
+      const ang1 = Math.acos(clamp(dot1,-1,1)) * 2;
+      const ang2 = Math.acos(clamp(dot2,-1,1)) * 2;
+      const angSkip = Math.acos(clamp(dotSkip,-1,1)) * 2;
+      if (ang1 > angThresh && ang2 > angThresh && angSkip < angThresh) {
+        // interpolate b = slerp(a,c,0.5)
+        const qa = new THREE.Quaternion(a[0],a[1],a[2],a[3]);
+        const qc = new THREE.Quaternion(c[0],c[1],c[2],c[3]);
+        qa.slerp(qc, 0.5);
+        frames[i].q[k] = [qa.x, qa.y, qa.z, qa.w];
+        fixed++;
+      }
+    }
+  }
+  // rebuild clip with new frames
+  rebuildClipFromFrames(tk);
+  toast("Despike: fixed " + fixed + " frames.", "success");
+  if (APP.scrubAction) { APP.scrubAction.stop(); APP.scrubAction = APP.charMixer.clipAction(tk.clip); APP.scrubAction.play(); APP.scrubAction.paused = !APP.scrubPlaying; }
+}
+$("btn-despike").addEventListener("click", despike);
+
+function rebuildClipFromFrames(tk) {
+  const times = tk.frames.map(f => f.t);
+  const duration = times[times.length - 1];
+  const tracks = [];
+  for (const logical of DRIVEN_BONES) {
+    const bone = APP.charBones[logical];
+    if (!bone) continue;
+    const values = [];
+    for (const f of tk.frames) {
+      const q = f.q[logical] || [0,0,0,1];
+      values.push(q[0], q[1], q[2], q[3]);
+    }
+    tracks.push(new THREE.QuaternionKeyframeTrack(bone.name + ".quaternion", times, values));
+  }
+  if (APP.charBones.Hips) {
+    const vals = [];
+    for (const f of tk.frames) {
+      const p = f.hipPos || [0, APP.hipRestY, 0];
+      vals.push(p[0],p[1],p[2]);
+    }
+    tracks.push(new THREE.VectorKeyframeTrack(APP.charBones.Hips.name + ".position", times, vals));
+  }
+  tk.clip = new THREE.AnimationClip(tk.name, duration, tracks);
+}
+
+/* =============================================================
+   EXPORT (GLB with embedded animation)
+============================================================= */
+function buildTrimmedClip(tk) {
+  // sub-sample frames between trimIn..trimOut
+  const startT = tk.trimIn, endT = tk.trimOut;
+  const filtered = tk.frames.filter(f => f.t >= startT && f.t <= endT);
+  if (filtered.length < 2) throw new Error("Trim region has fewer than 2 frames.");
+  const t0 = filtered[0].t;
+  const times = filtered.map(f => f.t - t0);
+  const duration = times[times.length - 1];
+
+  const tracks = [];
+  for (const logical of DRIVEN_BONES) {
+    const bone = APP.charBones[logical];
+    if (!bone) continue;
+    const vals = [];
+    for (const f of filtered) {
+      const q = f.q[logical] || [0,0,0,1];
+      vals.push(q[0],q[1],q[2],q[3]);
+    }
+    tracks.push(new THREE.QuaternionKeyframeTrack(bone.name + ".quaternion", times, vals));
+  }
+  if (APP.charBones.Hips) {
+    const vals = [];
+    for (const f of filtered) {
+      const p = f.hipPos || [0, APP.hipRestY, 0];
+      vals.push(p[0],p[1],p[2]);
+    }
+    tracks.push(new THREE.VectorKeyframeTrack(APP.charBones.Hips.name + ".position", times, vals));
+  }
+  const clip = new THREE.AnimationClip(tk.name + "_trim", duration, tracks);
+  return clip;
+}
+
+function verifyClip(clip) {
+  const errs = [];
+  if (!(clip.duration > 0)) errs.push("clip.duration <= 0");
+  if (!clip.tracks || clip.tracks.length < 1) errs.push("no tracks");
+  let kfMinTime = Infinity, kfMaxTime = -Infinity, kfCount = 0;
+  for (const tr of clip.tracks) {
+    if (tr.times.length < 2) errs.push("track " + tr.name + " has <2 keyframes");
+    kfMinTime = Math.min(kfMinTime, tr.times[0]);
+    kfMaxTime = Math.max(kfMaxTime, tr.times[tr.times.length-1]);
+    kfCount += tr.times.length;
+  }
+  if (kfMinTime > 1e-3) errs.push("first keyframe not at t=0 (t=" + kfMinTime.toFixed(3) + ")");
+  if (Math.abs(kfMaxTime - clip.duration) > 0.05) errs.push("last keyframe (" + kfMaxTime.toFixed(3) + ") != clip.duration (" + clip.duration.toFixed(3) + ")");
+  return { ok: errs.length === 0, errors: errs, keyframeCount: kfCount };
+}
+
+function exportTake(tk) {
+  if (!APP.charRoot) { toast("No character to export.", "error"); return; }
+  let clip;
+  try { clip = buildTrimmedClip(tk); }
+  catch (e) { toast("Build clip failed: " + e.message, "error"); return; }
+  const ver = verifyClip(clip);
+  if (!ver.ok) {
+    toast("Pre-export verify FAILED: " + ver.errors.join("; "), "error");
+    console.error("[verify]", ver);
+    return;
+  }
+  const exporter = new THREE.GLTFExporter();
+  exporter.parse(APP.charRoot, gltf => {
+    const blob = new Blob([gltf], { type: "application/octet-stream" });
+    const fname = `${tk.name}_${tk.category}_${tk.grade}.glb`;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    APP._lastExportedBlob = blob;
+    APP._lastExportedName = fname;
+    toast("Exported " + fname + " (" + (blob.size/1024).toFixed(0) + "KB)", "success");
+  }, err => {
+    toast("GLTFExporter failed: " + err.message, "error");
+  }, { binary: true, animations: [clip] });
+}
+
+$("btn-export-selected").addEventListener("click", () => {
+  const ok = APP.takes.filter(t => t.grade !== "Skip");
+  if (!ok.length) { toast("No takes graded A/B/C.", "error"); return; }
+  for (const tk of ok) exportTake(tk);
+});
+
+$("btn-verify-reload").addEventListener("click", () => {
+  if (!APP._lastExportedBlob) { toast("Export something first.", "error"); return; }
+  const url = URL.createObjectURL(APP._lastExportedBlob);
+  const loader = makeGLTFLoader();
+  loader.load(url, gltf => {
+    URL.revokeObjectURL(url);
+    const animCount = gltf.animations ? gltf.animations.length : 0;
+    const tracksCount = animCount ? gltf.animations[0].tracks.length : 0;
+    const dur = animCount ? gltf.animations[0].duration : 0;
+    toast(`Round-trip OK: ${animCount} clip(s), ${tracksCount} tracks, ${dur.toFixed(2)}s`, "success");
+    console.log("[verify-reload]", gltf);
+  }, undefined, err => { toast("Round-trip FAILED: " + err.message, "error"); });
+});
+
+/* =============================================================
+   COMPARE (BVH / GLB reference)
+============================================================= */
+$("file-compare").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  const ext = f.name.toLowerCase().split(".").pop();
+  if (ext === "glb" || ext === "gltf") {
+    const loader = makeGLTFLoader();
+    loader.load(url, gltf => {
+      onModelLoaded(gltf, "reference");
+      URL.revokeObjectURL(url);
+    }, undefined, err => toast("GLB ref failed: " + err.message, "error"));
+  } else if (ext === "bvh") {
+    const bvhLoader = new THREE.BVHLoader();
+    bvhLoader.load(url, result => {
+      if (APP.reference) APP.scene.remove(APP.reference);
+      APP.reference = result.skeleton.bones[0];
+      // Build a skinnedMesh wrapper for visualization
+      const group = new THREE.Group();
+      const sh = new THREE.SkeletonHelper(APP.reference);
+      group.add(APP.reference);
+      group.add(sh);
+      group.position.x = 1.5;
+      APP.scene.add(group);
+      APP.referenceMixer = new THREE.AnimationMixer(APP.reference);
+      const action = APP.referenceMixer.clipAction(result.clip);
+      action.play();
+      $("compare-status").textContent = "BVH loaded. Duration: " + result.clip.duration.toFixed(2) + "s.";
+    }, undefined, err => toast("BVH load failed: " + err.message, "error"));
+  } else {
+    toast("Unsupported ref type: " + ext, "error");
+  }
+});
+$("btn-compare-play").addEventListener("click", () => {
+  if (APP.referenceMixer) { /* already playing */ toast("Reference playing.", ""); }
+});
+$("btn-compare-clear").addEventListener("click", () => {
+  if (APP.reference) APP.scene.remove(APP.reference);
+  APP.reference = null; APP.referenceMixer = null;
+  $("compare-status").textContent = "No reference loaded.";
+});
+
+/* =============================================================
+   PER-BONE CORRECTION SLIDERS + PRESETS
+============================================================= */
+function buildBoneCorrectionSliders() {
+  const div = $("bone-correct-sliders");
+  div.innerHTML = "";
+  for (const logical of DRIVEN_BONES) {
+    const c = window.boneCorrections[logical];
+    const wrap = document.createElement("div");
+    wrap.className = "bone-correct";
+    wrap.innerHTML = `<div class="bone-name">${logical}${APP.charBones[logical] ? "" : " <span style='color:var(--bad)'>(not mapped)</span>"}</div>`;
+    for (const ax of ["x","y","z"]) {
+      const row = document.createElement("div");
+      row.className = "slider-row";
+      row.innerHTML = `
+        <label>${ax.toUpperCase()}°</label>
+        <input type="range" min="-180" max="180" step="1" value="${c[ax]}"/>
+        <span class="val">${c[ax]}°</span>`;
+      const sl = row.querySelector("input");
+      const vl = row.querySelector(".val");
+      sl.addEventListener("input", () => {
+        c[ax] = parseFloat(sl.value);
+        vl.textContent = c[ax] + "°";
+      });
+      wrap.appendChild(row);
+    }
+    div.appendChild(wrap);
+  }
+}
+
+$("btn-preset-save").addEventListener("click", () => {
+  localStorage.setItem("bone_corrections_cc5", JSON.stringify(window.boneCorrections));
+  toast("Saved to localStorage.", "success");
+});
+$("btn-preset-load").addEventListener("click", () => {
+  const s = localStorage.getItem("bone_corrections_cc5");
+  if (!s) { toast("No preset in localStorage.", "error"); return; }
+  try {
+    window.boneCorrections = JSON.parse(s);
+    buildBoneCorrectionSliders();
+    toast("Preset loaded.", "success");
+  } catch(e) { toast("Bad preset JSON.", "error"); }
+});
+$("btn-preset-defaults").addEventListener("click", () => {
+  window.boneCorrections = JSON.parse(JSON.stringify(DEFAULT_BONE_CORRECTIONS));
+  buildBoneCorrectionSliders();
+  toast("Reset to defaults.", "");
+});
+$("btn-preset-export").addEventListener("click", () => {
+  const blob = new Blob([JSON.stringify(window.boneCorrections, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "PRESET_CC5_CORRECTIONS.json";
+  a.click();
+});
+$("preset-import").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      window.boneCorrections = JSON.parse(r.result);
+      buildBoneCorrectionSliders();
+      toast("Imported preset.", "success");
+    } catch (er) { toast("Bad JSON.", "error"); }
+  };
+  r.readAsText(f);
+});
+
+/* =============================================================
+   ONE EURO SLIDERS
+============================================================= */
+function bindEuroSlider(id, valId, key) {
+  const sl = $(id), vl = $(valId);
+  sl.addEventListener("input", () => {
+    APP.oneEuroParams[key] = parseFloat(sl.value);
+    vl.textContent = APP.oneEuroParams[key].toFixed(2);
+    updateAllEuroParams();
+  });
+}
+bindEuroSlider("oe-mincut", "oe-mincut-val", "minCutoff");
+bindEuroSlider("oe-beta",   "oe-beta-val",   "beta");
+bindEuroSlider("oe-dcut",   "oe-dcut-val",   "dCutoff");
+
+/* =============================================================
+   HUDs (foot contact + bone rotation)
+============================================================= */
+function buildFootHUD() {
+  const div = $("foot-hud");
+  div.innerHTML = `
+    <div class="hud-line"><span>L Foot Y</span><span id="hud-lfoot-y">--</span></div>
+    <div class="hud-line"><span>R Foot Y</span><span id="hud-rfoot-y">--</span></div>
+    <div class="hud-line"><span>L Foot World</span><span id="hud-lfoot-w">--</span></div>
+    <div class="hud-line"><span>R Foot World</span><span id="hud-rfoot-w">--</span></div>`;
+}
+function buildBoneHUD() {
+  const div = $("bone-hud");
+  const bones = ["Hips","LeftUpperArm","LeftLowerArm","RightUpperArm","RightLowerArm","LeftUpperLeg","LeftLowerLeg","RightUpperLeg","RightLowerLeg"];
+  div.innerHTML = bones.map(b => `<div class="hud-line" id="hud-rot-${b}"><span>${b}</span><span>--</span></div>`).join("");
+}
+
+function updateHUDs() {
+  if (!APP.charBones || !Object.keys(APP.charBones).length) return;
+  // foot
+  const lf = APP.charBones.LeftFoot, rf = APP.charBones.RightFoot;
+  const lw = new THREE.Vector3(), rw = new THREE.Vector3();
+  if (lf) {
+    lf.getWorldPosition(lw);
+    const el = $("hud-lfoot-y"); if (el) {
+      el.textContent = lw.y.toFixed(3);
+      el.parentElement.className = "hud-line" + (lw.y > 0.05 ? " bad" : "");
+    }
+    const e2 = $("hud-lfoot-w"); if (e2) e2.textContent = `(${lw.x.toFixed(2)},${lw.y.toFixed(2)},${lw.z.toFixed(2)})`;
+  }
+  if (rf) {
+    rf.getWorldPosition(rw);
+    const el = $("hud-rfoot-y"); if (el) {
+      el.textContent = rw.y.toFixed(3);
+      el.parentElement.className = "hud-line" + (rw.y > 0.05 ? " bad" : "");
+    }
+    const e2 = $("hud-rfoot-w"); if (e2) e2.textContent = `(${rw.x.toFixed(2)},${rw.y.toFixed(2)},${rw.z.toFixed(2)})`;
+  }
+  // bone rotations
+  const eulCache = new THREE.Euler();
+  for (const k of ["Hips","LeftUpperArm","LeftLowerArm","RightUpperArm","RightLowerArm","LeftUpperLeg","LeftLowerLeg","RightUpperLeg","RightLowerLeg"]) {
+    const b = APP.charBones[k]; if (!b) continue;
+    eulCache.setFromQuaternion(b.quaternion, "XYZ");
+    const x = deg(eulCache.x), y = deg(eulCache.y), z = deg(eulCache.z);
+    const el = $("hud-rot-" + k); if (!el) continue;
+    el.children[1].textContent = `${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)}`;
+    const overflow = Math.max(Math.abs(x), Math.abs(y), Math.abs(z));
+    el.className = "hud-line" + (overflow > 180 ? " bad" : overflow > 150 ? " warn" : "");
+  }
+}
+
+/* =============================================================
+   PANEL COLLAPSE
+============================================================= */
+document.querySelectorAll(".panel h3").forEach(h => {
+  h.addEventListener("click", () => h.parentElement.classList.toggle("collapsed"));
+});
+
+/* =============================================================
+   MEDIAPIPE STICK FIGURE OVERLAY (DIAGNOSTIC)
+   Renders the raw poseWorldLandmarks as a wireframe stick figure
+   alongside / on top of the retargeted character so you can see
+   where MediaPipe -> CC5 retargeting math diverges.
+
+   Modes (cycled with keys 1/2/3):
+     1 = side-by-side (offset 1.5m to character's left)
+     2 = overlapped  (anchored on character hip, semi-transparent)
+     3 = hidden
+
+   Plus: per-bone direction arrows showing the vector MediaPipe
+   THINKS each driven bone should point along, vs the bone's
+   current rendered orientation -- diagnostic gold.
+============================================================= */
+
+// MediaPipe Pose connections (33 landmarks)
+// Indices from https://google.github.io/mediapipe/solutions/pose
+const POSE_CONNECTIONS = [
+  // face
+  [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],
+  // torso
+  [11,12],[11,23],[12,24],[23,24],
+  // left arm
+  [11,13],[13,15],[15,17],[15,19],[15,21],[17,19],
+  // right arm
+  [12,14],[14,16],[16,18],[16,20],[16,22],[18,20],
+  // left leg
+  [23,25],[25,27],[27,29],[27,31],[29,31],
+  // right leg
+  [24,26],[26,28],[28,30],[28,32],[30,32],
+];
+
+// Landmark indices used for per-bone direction arrows.
+// Each entry: [logicalBoneName, headLandmarkIdx, tailLandmarkIdx]
+const BONE_DIRECTION_LANDMARKS = [
+  ["LeftUpperArm",  11, 13],
+  ["LeftLowerArm",  13, 15],
+  ["RightUpperArm", 12, 14],
+  ["RightLowerArm", 14, 16],
+  ["LeftUpperLeg",  23, 25],
+  ["LeftLowerLeg",  25, 27],
+  ["RightUpperLeg", 24, 26],
+  ["RightLowerLeg", 26, 28],
+  ["Spine",         23, 11],  // hip to shoulder midline (approx)
+];
+
+const STICK = {
+  mode: 1,                  // 1=side, 2=overlap, 3=hidden
+  group: null,              // THREE.Group holding everything
+  joints: [],               // 33 sphere meshes
+  lineSeg: null,            // LineSegments for skeleton
+  lineGeom: null,
+  jointMat: null,
+  lineMat: null,
+  sourceLabel: null,        // sprite "Source (MediaPipe)"
+  targetLabel: null,        // sprite "Target (Retargeted)"
+  arrowGroup: null,         // group of per-bone direction arrows
+  arrows: {},               // logical -> { mpArrow, charArrow }
+  lastPose3D: null,         // last poseWorldLandmarks
+  characterHipWorld: new THREE.Vector3(),
+};
+
+function makeLabelSprite(text, color) {
+  const c = document.createElement("canvas");
+  c.width = 256; c.height = 64;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "rgba(15,18,22,0.85)";
+  ctx.fillRect(0,0,c.width,c.height);
+  ctx.fillStyle = color;
+  ctx.font = "bold 28px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, c.width/2, c.height/2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(0.8, 0.2, 1);
+  return sprite;
+}
+
+function initStickFigure() {
+  STICK.group = new THREE.Group();
+  STICK.group.name = "MP_StickFigure";
+  APP.scene.add(STICK.group);
+
+  STICK.jointMat = new THREE.MeshBasicMaterial({ color: 0xffeb3b, transparent: true, opacity: 1.0 });
+  STICK.lineMat  = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 1.0, linewidth: 2 });
+
+  // 33 joint spheres (small, ~2.5cm)
+  const sphereGeom = new THREE.SphereGeometry(0.025, 8, 6);
+  for (let i = 0; i < 33; i++) {
+    const m = new THREE.Mesh(sphereGeom, STICK.jointMat);
+    m.visible = false;
+    STICK.group.add(m);
+    STICK.joints.push(m);
+  }
+
+  // Line segments (start hidden)
+  STICK.lineGeom = new THREE.BufferGeometry();
+  // 2 endpoints per connection, 3 floats per endpoint
+  const lineCount = POSE_CONNECTIONS.length;
+  const positions = new Float32Array(lineCount * 2 * 3);
+  STICK.lineGeom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  STICK.lineSeg = new THREE.LineSegments(STICK.lineGeom, STICK.lineMat);
+  STICK.lineSeg.visible = false;
+  STICK.group.add(STICK.lineSeg);
+
+  // Labels
+  STICK.sourceLabel = makeLabelSprite("Source (MediaPipe)", "#00ffff");
+  STICK.sourceLabel.visible = false;
+  STICK.group.add(STICK.sourceLabel);
+
+  STICK.targetLabel = makeLabelSprite("Target (Retargeted)", "#4ec9b0");
+  STICK.targetLabel.visible = false;
+  APP.scene.add(STICK.targetLabel);  // anchored to character, not stick group
+
+  // Arrow group for per-bone diagnostic arrows
+  STICK.arrowGroup = new THREE.Group();
+  STICK.arrowGroup.name = "MP_BoneArrows";
+  APP.scene.add(STICK.arrowGroup);
+  // Pre-create arrows for each driven bone
+  for (const [logical /*, hi, ti*/] of BONE_DIRECTION_LANDMARKS) {
+    const mpArrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0),
+      0.1, 0x00ffff, 0.04, 0.025
+    );
+    const charArrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0),
+      0.1, 0xff4ec9, 0.04, 0.025  // magenta for retargeted
+    );
+    mpArrow.visible = false;
+    charArrow.visible = false;
+    STICK.arrowGroup.add(mpArrow);
+    STICK.arrowGroup.add(charArrow);
+    STICK.arrows[logical] = { mpArrow, charArrow };
+  }
+  console.log("[stick] initialized. Press 1=side-by-side, 2=overlap, 3=hide.");
+}
+
+function applyStickFigureMode() {
+  const visible = STICK.mode !== 3;
+  STICK.lineSeg.visible = visible;
+  for (const j of STICK.joints) j.visible = visible && j._hasData;
+  STICK.sourceLabel.visible = visible;
+  STICK.targetLabel.visible = visible;
+
+  // Per-bone arrows only in mode 2 (overlap) where comparison is most useful
+  const arrowsVis = visible && STICK.mode === 2;
+  for (const k in STICK.arrows) {
+    STICK.arrows[k].mpArrow.visible = arrowsVis;
+    STICK.arrows[k].charArrow.visible = arrowsVis;
+  }
+
+  // Opacity / offset depending on mode
+  if (STICK.mode === 2) {
+    STICK.jointMat.opacity = 0.55;
+    STICK.lineMat.opacity = 0.65;
+  } else {
+    STICK.jointMat.opacity = 1.0;
+    STICK.lineMat.opacity = 1.0;
+  }
+}
+
+function updateStickFigure(poseWorldLandmarks) {
+  if (!STICK.group) return;
+  if (STICK.mode === 3) {
+    STICK.lastPose3D = poseWorldLandmarks;
+    return;
+  }
+  if (!poseWorldLandmarks || !poseWorldLandmarks.length) {
+    for (const j of STICK.joints) { j.visible = false; j._hasData = false; }
+    STICK.lineSeg.visible = false;
+    return;
+  }
+  STICK.lastPose3D = poseWorldLandmarks;
+
+  // MediaPipe coord convention: x rightward, y downward, z towards camera (in meters).
+  // Three.js convention: x right, y up, z out of screen.
+  // So we negate Y (flip), and apply a side-by-side offset when mode=1.
+  const offsetX = (STICK.mode === 1) ? -1.5 : 0;
+
+  // Anchor the stick-figure pelvis at character hip world position
+  // pelvis ≈ midpoint of landmarks 23 (left hip) and 24 (right hip)
+  const lh = poseWorldLandmarks[23], rh = poseWorldLandmarks[24];
+  let pelvisX = 0, pelvisY = 0, pelvisZ = 0;
+  if (lh && rh) {
+    pelvisX = (lh.x + rh.x) * 0.5;
+    pelvisY = (lh.y + rh.y) * 0.5;
+    pelvisZ = (lh.z + rh.z) * 0.5;
+  }
+
+  // Character hip world position (for anchor)
+  if (APP.charBones.Hips) {
+    APP.charBones.Hips.getWorldPosition(STICK.characterHipWorld);
+  } else {
+    STICK.characterHipWorld.set(0, 1.0, 0);
+  }
+
+  function lmToWorld(lm) {
+    // Flip MediaPipe Y, translate so pelvis aligns to character hip
+    return [
+      (lm.x - pelvisX) + STICK.characterHipWorld.x + offsetX,
+      -(lm.y - pelvisY) + STICK.characterHipWorld.y,
+      (lm.z - pelvisZ) + STICK.characterHipWorld.z,
+    ];
+  }
+
+  // Update joint sphere positions
+  for (let i = 0; i < 33; i++) {
+    const lm = poseWorldLandmarks[i];
+    const j = STICK.joints[i];
+    if (!lm || lm.visibility !== undefined && lm.visibility < 0.3) {
+      j.visible = false; j._hasData = false;
+      continue;
+    }
+    const w = lmToWorld(lm);
+    j.position.set(w[0], w[1], w[2]);
+    j._hasData = true;
+    j.visible = true;
+  }
+
+  // Update line segment positions
+  const pos = STICK.lineGeom.attributes.position.array;
+  for (let i = 0; i < POSE_CONNECTIONS.length; i++) {
+    const [a, b] = POSE_CONNECTIONS[i];
+    const la = poseWorldLandmarks[a], lb = poseWorldLandmarks[b];
+    const base = i * 6;
+    if (la && lb) {
+      const wa = lmToWorld(la), wb = lmToWorld(lb);
+      pos[base+0] = wa[0]; pos[base+1] = wa[1]; pos[base+2] = wa[2];
+      pos[base+3] = wb[0]; pos[base+4] = wb[1]; pos[base+5] = wb[2];
+    } else {
+      pos[base+0]=pos[base+1]=pos[base+2]=0;
+      pos[base+3]=pos[base+4]=pos[base+5]=0;
+    }
+  }
+  STICK.lineGeom.attributes.position.needsUpdate = true;
+  STICK.lineSeg.visible = true;
+
+  // Position labels: source above pelvis area of stick figure (top of head ~ landmark 0)
+  const head = poseWorldLandmarks[0];
+  if (head) {
+    const hw = lmToWorld(head);
+    STICK.sourceLabel.position.set(hw[0], hw[1] + 0.25, hw[2]);
+  }
+  // Target label above character head
+  if (APP.charBones.Head) {
+    const hp = new THREE.Vector3();
+    APP.charBones.Head.getWorldPosition(hp);
+    STICK.targetLabel.position.set(hp.x, hp.y + 0.25, hp.z);
+  } else {
+    STICK.targetLabel.position.set(STICK.characterHipWorld.x, STICK.characterHipWorld.y + 0.9, STICK.characterHipWorld.z);
+  }
+
+  // Per-bone arrows (only meaningful in mode 2)
+  if (STICK.mode === 2) {
+    for (const [logical, headIdx, tailIdx] of BONE_DIRECTION_LANDMARKS) {
+      const hd = poseWorldLandmarks[headIdx], tl = poseWorldLandmarks[tailIdx];
+      const pair = STICK.arrows[logical];
+      if (!pair) continue;
+      if (!hd || !tl) { pair.mpArrow.visible = false; pair.charArrow.visible = false; continue; }
+      // MP arrow: from head landmark, pointing at tail landmark
+      const hw = lmToWorld(hd), tw = lmToWorld(tl);
+      const mpStart = new THREE.Vector3(hw[0], hw[1], hw[2]);
+      const mpDir = new THREE.Vector3(tw[0]-hw[0], tw[1]-hw[1], tw[2]-hw[2]);
+      const mpLen = Math.max(0.05, mpDir.length());
+      mpDir.normalize();
+      pair.mpArrow.position.copy(mpStart);
+      pair.mpArrow.setDirection(mpDir);
+      pair.mpArrow.setLength(mpLen, mpLen * 0.3, mpLen * 0.2);
+      pair.mpArrow.visible = true;
+
+      // Char arrow: from CC5 bone head, pointing along the bone's child axis
+      const bone = APP.charBones[logical];
+      if (bone) {
+        const bonePos = new THREE.Vector3();
+        bone.getWorldPosition(bonePos);
+        // Direction = bone's local Y axis transformed to world (CC5 bones typically point along +Y)
+        const dir = new THREE.Vector3(0,1,0).applyQuaternion(bone.getWorldQuaternion(new THREE.Quaternion()));
+        pair.charArrow.position.copy(bonePos);
+        pair.charArrow.setDirection(dir);
+        pair.charArrow.setLength(mpLen, mpLen * 0.3, mpLen * 0.2);
+        pair.charArrow.visible = true;
+      } else {
+        pair.charArrow.visible = false;
+      }
+    }
+  }
+}
+
+// Key bindings: 1 / 2 / 3 for stick figure modes
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
+  if (e.key === "1") { STICK.mode = 1; applyStickFigureMode(); toast("Stick figure: side-by-side", ""); }
+  else if (e.key === "2") { STICK.mode = 2; applyStickFigureMode(); toast("Stick figure: overlap + bone arrows", ""); }
+  else if (e.key === "3") { STICK.mode = 3; applyStickFigureMode(); toast("Stick figure: hidden", ""); }
+});
+
+/* =============================================================
+   AUTO-LOAD DEFAULT CHARACTER (./uk1_outboxer.glb if present)
+   This makes one-click launch possible: if a GLB sits next to
+   index.html, load it automatically. Manual file picker still
+   works for loading any other character.
+============================================================= */
+function autoLoadDefaultCharacter() {
+  const url = "./uk1_outboxer.glb";
+  // HEAD probe first so we don't spam console with 404 on missing file
+  fetch(url, { method: "HEAD" })
+    .then(res => {
+      if (!res.ok) {
+        console.log("[auto-load] no default character at", url, "- waiting for manual file pick.");
+        $("model-info").textContent = "No model loaded. (Drop GLB above, or place uk1_outboxer.glb next to index.html.)";
+        return;
+      }
+      console.log("[auto-load] found default character, loading", url);
+      $("model-info").textContent = "Auto-loading uk1_outboxer.glb...";
+      const loader = makeGLTFLoader();
+      loader.load(url, gltf => {
+        onModelLoaded(gltf, "character");
+        toast("UK1 auto-loaded - calibrate T-pose to start.", "success");
+        $("model-info").innerHTML = $("model-info").innerHTML +
+          '<br><span style="color:var(--good)">&#10004; UK1 auto-loaded - calibrate T-pose to start</span>';
+      }, undefined, err => {
+        toast("Auto-load failed: " + err.message, "error");
+        console.error("[auto-load] GLB load error:", err);
+        $("model-info").textContent = "Auto-load failed. Use file picker above.";
+      });
+    })
+    .catch(err => {
+      // fetch can fail under file:// in some configurations; fall back silently
+      console.log("[auto-load] HEAD probe failed (likely file:// restriction):", err.message);
+      // Try direct load anyway — many browsers allow same-folder file:// GLB load
+      const loader = makeGLTFLoader();
+      loader.load(url, gltf => {
+        onModelLoaded(gltf, "character");
+        toast("UK1 auto-loaded - calibrate T-pose to start.", "success");
+        $("model-info").innerHTML = $("model-info").innerHTML +
+          '<br><span style="color:var(--good)">&#10004; UK1 auto-loaded - calibrate T-pose to start</span>';
+      }, undefined, () => {
+        // Quiet fail — no default character present
+        $("model-info").textContent = "No model loaded. (Drop GLB above, or place uk1_outboxer.glb next to index.html.)";
+      });
+    });
+}
+
+/* =============================================================
+   BOOT
+============================================================= */
+initThree();
+initStickFigure();
+applyStickFigureMode();
+bindVideoControls();
+updateModeStatus();
+autoLoadDefaultCharacter();
+console.log("[boot] VR Boxing Browser Mocap ready. window.APP, window.boneCorrections, window.charBones exposed.");
+console.log("[boot] Hotkeys: 1=stick side-by-side, 2=stick overlap+arrows, 3=stick hidden, S=skeleton, I/O=trim, Space=play.");
+console.log("[boot] Modes: Live Webcam (default) | Pre-recorded Video. Toggle at top of left panel.");
+
+</script>
+
+</body>
+</html>

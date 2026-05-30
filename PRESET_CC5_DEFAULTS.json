@@ -1,0 +1,27 @@
+{
+  "_comment": "Starting bone-correction quaternion Eulers (degrees, XYZ order) for retargeting KalidoKit's VRM-axis output onto a Reallusion CC5 character. Load via the tool's 'Load Preset' button or paste into window.boneCorrections in DevTools. Tune from here, do not assume these are final.",
+  "_axes_convention": "Each {x,y,z} is applied as: applied = corrQuat * (kalidoDelta) * inverse(corrQuat) * restQuat. Increase Z on UpperArm to roll the arm around its bone-length axis.",
+  "_known_issue": "CC5 'Upperarm' (not 'UpperArm') and 'CC_Base_Hip' (not 'Hips'); substring match in code handles both.",
+
+  "Hips":          { "x": 0,   "y": 0, "z": 0   },
+  "Spine":         { "x": 0,   "y": 0, "z": 0   },
+  "Chest":         { "x": 0,   "y": 0, "z": 0   },
+  "Neck":          { "x": 0,   "y": 0, "z": 0   },
+  "Head":          { "x": 0,   "y": 0, "z": 0   },
+
+  "LeftUpperArm":  { "x": 0,   "y": 0, "z":  90 },
+  "LeftLowerArm":  { "x": 0,   "y": 0, "z":  90 },
+  "LeftHand":      { "x": 0,   "y": 0, "z":  90 },
+
+  "RightUpperArm": { "x": 0,   "y": 0, "z": -90 },
+  "RightLowerArm": { "x": 0,   "y": 0, "z": -90 },
+  "RightHand":     { "x": 0,   "y": 0, "z": -90 },
+
+  "LeftUpperLeg":  { "x": 0,   "y": 0, "z": 0   },
+  "LeftLowerLeg":  { "x": 0,   "y": 0, "z": 0   },
+  "LeftFoot":      { "x": 0,   "y": 0, "z": 0   },
+
+  "RightUpperLeg": { "x": 0,   "y": 0, "z": 0   },
+  "RightLowerLeg": { "x": 0,   "y": 0, "z": 0   },
+  "RightFoot":     { "x": 0,   "y": 0, "z": 0   }
+}
