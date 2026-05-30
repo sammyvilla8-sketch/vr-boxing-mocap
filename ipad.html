@@ -2328,12 +2328,13 @@ function updateStickFigure(poseWorldLandmarks){
   // Local coords inside STICK.group: pelvis at origin, Y up, in MediaPipe
   // meters. STICK.group.scale + STICK.group.position (set by
   // syncStickFigureToCharacter) convert these into UK1's rendered world frame.
+  const STICK_CLAMP_M = 1.2;
   function lmToLocal(lm){
-    return [
-      (lm.x - pelvisX),
-      -(lm.y - pelvisY),
-      (lm.z - pelvisZ),
-    ];
+    const cx = (lm.x - pelvisX);
+    const cy = -(lm.y - pelvisY);
+    const cz = (lm.z - pelvisZ);
+    const clamp = (v) => Math.max(-STICK_CLAMP_M, Math.min(STICK_CLAMP_M, v));
+    return [ clamp(cx), clamp(cy), clamp(cz) ];
   }
   for (let i = 0; i < 33; i++){
     const lm = poseWorldLandmarks[i];
@@ -2350,7 +2351,9 @@ function updateStickFigure(poseWorldLandmarks){
     const [a, b] = POSE_CONNECTIONS[i];
     const la = poseWorldLandmarks[a], lb = poseWorldLandmarks[b];
     const base = i * 6;
-    if (la && lb){
+    const visA = la && (la.visibility === undefined || la.visibility >= 0.5);
+    const visB = lb && (lb.visibility === undefined || lb.visibility >= 0.5);
+    if (la && lb && visA && visB){
       const wa = lmToLocal(la), wb = lmToLocal(lb);
       pos[base+0]=wa[0]; pos[base+1]=wa[1]; pos[base+2]=wa[2];
       pos[base+3]=wb[0]; pos[base+4]=wb[1]; pos[base+5]=wb[2];

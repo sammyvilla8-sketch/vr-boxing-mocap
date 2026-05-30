@@ -102,7 +102,12 @@
   body.popout-mode #left, body.popout-mode #right, body.popout-mode #statusbar,
   body.popout-mode #video-panel, body.popout-mode #scene-overlay-controls,
   body.popout-mode #timeline, body.popout-mode #uk1-progress { display:none !important; }
-  body.popout-mode #center { grid-template-columns: 1fr; }
+  body.popout-mode #center {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 / -1 !important;
+    grid-template-columns: 1fr;
+    width: 100%; height: 100vh;
+  }
   body.popout-mode #scene-panel { grid-column:1/-1; }
 
   /* "Popout Camera" mode: ?mode=popout-cam → hide everything except the camera */
@@ -111,7 +116,12 @@
   body.popout-cam-mode #scene-panel, body.popout-cam-mode #scene-overlay-controls,
   body.popout-cam-mode #timeline, body.popout-cam-mode #uk1-progress,
   body.popout-cam-mode #toast { display:none !important; }
-  body.popout-cam-mode #center { grid-template-columns: 1fr; }
+  body.popout-cam-mode #center {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 / -1 !important;
+    grid-template-columns: 1fr;
+    width: 100%; height: 100vh;
+  }
   body.popout-cam-mode #video-panel {
     position: absolute !important; inset: 0 !important;
     width: 100% !important; height: 100% !important;
@@ -529,7 +539,7 @@ const APP = {
   calibrationSamples: [],
 
   oneEuro: {},          // boneName -> { x:OneEuro, y:.., z:.., w:.. }
-  oneEuroParams: { minCutoff:1.2, beta:0.08, dCutoff:1.0 },
+  oneEuroParams: { minCutoff:0.6, beta:0.02, dCutoff:1.0 },  // tightened for noisy 2D fallback
 
   recording: false,
   recStart: 0,
@@ -2745,12 +2755,15 @@ function updateStickFigure(poseWorldLandmarks) {
   // Local coords inside STICK.group: pelvis at origin, Y up, in MediaPipe
   // meters. STICK.group.scale and STICK.group.position (set by
   // syncStickFigureToCharacter) handle conversion to UK1's rendered frame.
+  // Clamp each axis to ±MAX_M (in meters) so hallucinated off-screen landmarks
+  // from MediaPipe's lower-body predictions can't blow the stick figure up.
+  const STICK_CLAMP_M = 1.2;
   function lmToLocal(lm) {
-    return [
-      (lm.x - pelvisX),
-      -(lm.y - pelvisY),
-      (lm.z - pelvisZ),
-    ];
+    const cx = (lm.x - pelvisX);
+    const cy = -(lm.y - pelvisY);
+    const cz = (lm.z - pelvisZ);
+    const clamp = (v) => Math.max(-STICK_CLAMP_M, Math.min(STICK_CLAMP_M, v));
+    return [ clamp(cx), clamp(cy), clamp(cz) ];
   }
 
   // Update joint sphere positions
@@ -2773,11 +2786,14 @@ function updateStickFigure(poseWorldLandmarks) {
     const [a, b] = POSE_CONNECTIONS[i];
     const la = poseWorldLandmarks[a], lb = poseWorldLandmarks[b];
     const base = i * 6;
-    if (la && lb) {
+    const visA = la && (la.visibility === undefined || la.visibility >= 0.5);
+    const visB = lb && (lb.visibility === undefined || lb.visibility >= 0.5);
+    if (la && lb && visA && visB) {
       const wa = lmToLocal(la), wb = lmToLocal(lb);
       pos[base+0] = wa[0]; pos[base+1] = wa[1]; pos[base+2] = wa[2];
       pos[base+3] = wb[0]; pos[base+4] = wb[1]; pos[base+5] = wb[2];
     } else {
+      // Collapse line to a zero-length point at origin so it's invisible
       pos[base+0]=pos[base+1]=pos[base+2]=0;
       pos[base+3]=pos[base+4]=pos[base+5]=0;
     }

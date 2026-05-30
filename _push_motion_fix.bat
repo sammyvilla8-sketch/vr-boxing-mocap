@@ -1,14 +1,15 @@
 @echo off
 REM ============================================================
-REM Push: remove double Y-flip (stick figure was upside-down),
-REM hide UK1 SkeletonHelper by default (S key still toggles).
+REM Push: clamp stick figure to body, hide low-vis stick lines,
+REM tighten euro filter (less wild bone swings), fix popout
+REM black-screen by overriding #center grid placement.
 REM ============================================================
 
 setlocal
 cd /d "%~dp0"
 
 echo.
-echo === VR Boxing Mocap: fix upside-down stick + hide debug rig ===
+echo === VR Boxing Mocap: scale clamp + smooth + popout fix ===
 echo Folder: %CD%
 echo.
 
@@ -30,7 +31,7 @@ git status --short
 echo.
 
 echo [step 2] git commit
-git commit -m "Fix upside-down stick figure + hide CC5 rig debug helper" -m "Bug 1: 2D fallback was negating Y to convert image-down -> world-up, but updateStickFigure's lmToLocal also negates Y (it was written assuming MediaPipe's image-down convention). Double-negation made the stick figure upside-down. Removed the flip in the fallback so it matches MediaPipe's poseWorldLandmarks convention." -m "Bug 2: showSkeleton defaulted to true, which made THREE.SkeletonHelper render all 101 CC5 bones (including toe/jaw/finger/breast bones) as colored lines. With dangling foot/toe bones near y=0 it looked like 'a skeleton on the floor' next to the character. Default to false; S key still toggles for debugging." -m "Combined effect: page now shows just UK1 + the cyan MediaPipe stick figure (overlap mode, right-side-up) once webcam starts."
+git commit -m "Stick figure scale clamp, tighter smoothing, popout fix" -m "Symptom 1 (skeleton bigger than character): MediaPipe hallucinates lower-body landmarks at extreme positions when only upper body is in frame. Multiplied by H=1.75 they extended the stick figure far past UK1. Fix: clamp each axis to +/-1.2m in updateStickFigure's lmToLocal, and skip drawing line segments whose endpoints have visibility < 0.5." -m "Symptom 2 (moves like crazy after calibration): one-euro filter defaults (minCutoff=1.2, beta=0.08) weren't smoothing enough for the noisier 2D-derived pose. Tightened to (minCutoff=0.6, beta=0.02) — bone rotations now interpolate smoothly even when raw pose jitters." -m "Symptom 3 (popout black screen): #center had hardcoded grid-column:2/3 from the 3-column desktop layout. Popout modes collapse the grid to 1 column, so column 2 didn't exist and #center sized to zero, the canvas to zero, and the WebGL resize() bailed on !w||!h. Fix: override #center grid-column/grid-row to 1/-1 with !important in popout-mode and popout-cam-mode CSS."
 if errorlevel 1 ( echo [info] Nothing to commit. )
 
 echo.
