@@ -140,6 +140,33 @@
   #scene-overlay-controls button { font-size:11px; padding:4px 8px; }
   #scene-overlay-controls button.active { background: var(--accent); color: #0a0a0a; border-color: var(--accent); }
 
+  /* Debug panel (top-right inside #scene-panel, below scene-overlay-controls) */
+  #debug-panel {
+    position:absolute; top:54px; right:8px; z-index:7;
+    background:rgba(20,22,26,0.92); border:1px solid var(--border);
+    border-radius:4px; max-width: 340px; font-size:11px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+  #debug-panel summary {
+    cursor:pointer; padding:6px 10px; user-select:none;
+    list-style:none; font-weight:600; color:var(--fg);
+  }
+  #debug-panel summary::-webkit-details-marker { display:none; }
+  #debug-panel summary::before { content:"\25B6"; display:inline-block; margin-right:6px; transform:rotate(0); transition:transform 0.15s; }
+  #debug-panel[open] summary::before { transform:rotate(90deg); }
+  #debug-panel .body { padding:6px 10px 10px 10px; }
+  #debug-panel .slider-row {
+    display:grid; grid-template-columns:60px 1fr 50px;
+    gap:6px; align-items:center; margin:4px 0;
+  }
+  #debug-panel .slider-row label { color:var(--muted); }
+  #debug-panel .slider-row input[type=range] { width:100%; }
+  #debug-panel .slider-row .val { text-align:right; font-family:monospace; color:var(--accent); }
+  #debug-panel .readout { font-family:monospace; color:var(--muted); margin:2px 0; font-size:10.5px; }
+  #debug-panel .readout b { color:var(--fg); font-weight:normal; }
+  #debug-panel hr { border:none; border-top:1px solid var(--border); margin:6px 0; }
+  #debug-panel button { font-size:11px; padding:3px 8px; }
+
   /* UK1 download progress bar */
   #uk1-progress {
     position:absolute; bottom:8px; left:8px; right:8px;
@@ -286,8 +313,15 @@
         <hr/>
         <div class="row">
           <button id="btn-tpose-calib">Capture T-Pose (3s)</button>
+          <button id="btn-freeze-bones" title="Diagnostic: stop applying motion to UK1; show rest pose">Freeze Bones</button>
+        </div>
+        <div class="row" style="margin-top:4px; flex-wrap:wrap;">
+          <button id="btn-tpose-snapshot" title="Lock current MediaPipe pose; dial UK1+stick figure into alignment manually">T-Pose Freeze Frame</button>
+          <button id="btn-tpose-save-resume" disabled title="Save current slider values + frozen pose as calibration; resume live tracking">Save &amp; Resume</button>
+          <button id="btn-tpose-discard-resume" disabled title="Throw away frozen pose; resume live tracking unchanged">Discard &amp; Resume</button>
         </div>
         <div class="hint" id="tpose-status">Not calibrated.</div>
+        <div class="hint" id="frozen-status" style="display:none; color:var(--accent);">&#10074;&#10074; FROZEN — dial sliders, then Save &amp; Resume</div>
       </div>
     </div>
 
@@ -395,6 +429,69 @@
         <button id="btn-popout-cam" title="Open the camera in its own window (C) — drag to second monitor">Popout Cam (C)</button>
         <button id="btn-popout"     title="Open the 3D scene in its own window (P) — drag to second monitor">Popout 3D (P)</button>
       </div>
+
+      <!-- Debug panel — collapsed by default, top-right under overlay controls -->
+      <details id="debug-panel">
+        <summary>&#128295; Debug</summary>
+        <div class="body">
+          <div class="slider-row">
+            <label>Root X</label>
+            <input type="range" id="dbg-rotX" min="-180" max="180" step="1" value="0" />
+            <span class="val" id="dbg-rotX-val">0&deg;</span>
+          </div>
+          <div class="slider-row">
+            <label>Root Y</label>
+            <input type="range" id="dbg-rotY" min="-180" max="180" step="1" value="0" />
+            <span class="val" id="dbg-rotY-val">0&deg;</span>
+          </div>
+          <div class="slider-row">
+            <label>Root Z</label>
+            <input type="range" id="dbg-rotZ" min="-180" max="180" step="1" value="0" />
+            <span class="val" id="dbg-rotZ-val">0&deg;</span>
+          </div>
+          <div class="row" style="margin-top:4px;">
+            <button id="dbg-reset-rot">Reset rotation</button>
+          </div>
+          <hr/>
+          <div style="font-weight:600; margin-bottom:4px;">Stick Figure</div>
+          <div class="row" style="margin-bottom:4px;">
+            <label style="font-size:11px;"><input type="checkbox" id="dbg-stick-override"/> Manual override (bypass auto-sync)</label>
+          </div>
+          <div class="slider-row">
+            <label>Scale</label>
+            <input type="range" id="dbg-stick-scale" min="1" max="2000" step="1" value="500" />
+            <span class="val" id="dbg-stick-scale-val">500</span>
+          </div>
+          <div class="slider-row">
+            <label>Pos X</label>
+            <input type="range" id="dbg-stick-x" min="-1000" max="1000" step="1" value="0" />
+            <span class="val" id="dbg-stick-x-val">0</span>
+          </div>
+          <div class="slider-row">
+            <label>Pos Y</label>
+            <input type="range" id="dbg-stick-y" min="-500" max="1500" step="1" value="0" />
+            <span class="val" id="dbg-stick-y-val">0</span>
+          </div>
+          <div class="slider-row">
+            <label>Pos Z</label>
+            <input type="range" id="dbg-stick-z" min="-1000" max="1000" step="1" value="0" />
+            <span class="val" id="dbg-stick-z-val">0</span>
+          </div>
+          <div class="slider-row">
+            <label>Rot Y</label>
+            <input type="range" id="dbg-stick-roty" min="-180" max="180" step="1" value="0" />
+            <span class="val" id="dbg-stick-roty-val">0&deg;</span>
+          </div>
+          <div class="row" style="margin-top:4px;">
+            <button id="dbg-save">Save these values</button>
+          </div>
+          <hr/>
+          <div class="readout">Hip bone: <b id="dbg-hip-rot">-</b></div>
+          <div class="readout">MediaPipe hip: <b id="dbg-mp-hip">-</b></div>
+          <div class="readout">Cal offset: <b id="dbg-cal-off">-</b></div>
+          <div class="readout">Last MP frame: <b id="dbg-mp-age">-</b></div>
+        </div>
+      </details>
 
       <!-- UK1 download progress (visible while fetching from GitHub Release) -->
       <div id="uk1-progress">
@@ -1556,6 +1653,17 @@ function bindVideoControls() {
 }
 
 function onHolisticResults(res) {
+  APP.lastMpFrameTime = performance.now();
+  // FROZEN_MODE: substitute the last snapshotted landmarks so UK1 + stick figure
+  // hold the snapshot pose while sliders are dialed.
+  if (APP.frozenMode && APP.frozenSnapshot) {
+    const snap = APP.frozenSnapshot;
+    if (snap.poseLandmarks) res.poseLandmarks = snap.poseLandmarks;
+    if (snap.poseWorldLandmarks) res.poseWorldLandmarks = snap.poseWorldLandmarks;
+    if (snap.faceLandmarks) res.faceLandmarks = snap.faceLandmarks;
+    if (snap.leftHandLandmarks) res.leftHandLandmarks = snap.leftHandLandmarks;
+    if (snap.rightHandLandmarks) res.rightHandLandmarks = snap.rightHandLandmarks;
+  }
   APP.lastResults = res;
 
   // Pick the right overlay + source video for the current mode
@@ -1650,6 +1758,7 @@ function onHolisticResults(res) {
     pose = null;
   }
   if (pose) {
+    if (pose.Hips) APP.lastKalidoHips = pose.Hips;  // debug readout source
     try { driveCharacterFromPose(pose); }
     catch (e) { console.warn("[char] drive fail:", e); }
   }
@@ -1712,6 +1821,91 @@ $("btn-tpose-calib").addEventListener("click", () => {
   $("tpose-status").textContent = "Stand in T-pose, hold 3 seconds...";
 });
 
+// T-Pose Snapshot Mode: capture the current MediaPipe pose, freeze the
+// pipeline on it, then let the user dial UK1 + stick figure sliders into
+// visual alignment, then Save & Resume to bake the new calibration.
+$("btn-tpose-snapshot").addEventListener("click", () => {
+  if (!APP.lastResults || !APP.lastResults.poseLandmarks) {
+    toast("No live pose available. Start webcam and stand in T-pose first.", "error");
+    return;
+  }
+  // Deep-copy the relevant landmark arrays so they're not mutated by future onResults
+  const cpyArr = (arr) => arr ? arr.map(lm => ({ ...lm })) : null;
+  APP.frozenSnapshot = {
+    poseLandmarks: cpyArr(APP.lastResults.poseLandmarks),
+    poseWorldLandmarks: cpyArr(APP.lastResults.poseWorldLandmarks),
+    faceLandmarks: cpyArr(APP.lastResults.faceLandmarks),
+    leftHandLandmarks: cpyArr(APP.lastResults.leftHandLandmarks),
+    rightHandLandmarks: cpyArr(APP.lastResults.rightHandLandmarks),
+  };
+  APP.frozenMode = true;
+  $("btn-tpose-save-resume").disabled = false;
+  $("btn-tpose-discard-resume").disabled = false;
+  $("btn-tpose-snapshot").disabled = true;
+  $("frozen-status").style.display = "";
+  toast("Pose frozen. Dial sliders, then Save & Resume.", "success");
+});
+
+$("btn-tpose-save-resume").addEventListener("click", () => {
+  if (!APP.frozenSnapshot) return;
+  // Bake current snapshot into calibration baseline (replaces 3-sec capture).
+  try {
+    const baselinePose = Kalidokit.Pose.solve(
+      APP.frozenSnapshot.poseWorldLandmarks,
+      APP.frozenSnapshot.poseLandmarks,
+      { runtime: "mediapipe", video: (APP.mode==="video")?APP.videoFileEl:APP.videoEl, enableLegs: true }
+    );
+    APP.calibrationBaseline = {
+      landmarks: APP.frozenSnapshot.poseLandmarks,
+      kalidoKitPose: baselinePose,
+    };
+    $("stat-cal").textContent = "Yes";
+    $("dot-cal").className = "dot green";
+    $("tpose-status").innerHTML = "<span style='color:var(--good)'>&#10004; Calibrated (snapshot)</span>";
+  } catch (e) {
+    console.warn("[snapshot] kalidokit solve failed:", e);
+  }
+  // Persist current slider values via the existing Save button
+  try { document.getElementById("dbg-save").click(); } catch (e) {}
+  APP.frozenMode = false;
+  APP.frozenSnapshot = null;
+  $("btn-tpose-save-resume").disabled = true;
+  $("btn-tpose-discard-resume").disabled = true;
+  $("btn-tpose-snapshot").disabled = false;
+  $("frozen-status").style.display = "none";
+  toast("Saved & resumed. Live tracking ON.", "success");
+});
+
+$("btn-tpose-discard-resume").addEventListener("click", () => {
+  APP.frozenMode = false;
+  APP.frozenSnapshot = null;
+  $("btn-tpose-save-resume").disabled = true;
+  $("btn-tpose-discard-resume").disabled = true;
+  $("btn-tpose-snapshot").disabled = false;
+  $("frozen-status").style.display = "none";
+  toast("Frozen pose discarded. Live tracking ON.", "");
+});
+
+// Diagnostic: freeze the bone-application loop so UK1 renders in his REST pose
+// (whatever rotations are baked into the loaded GLB + rest-quaternion cache).
+// Used to isolate load-time rotation bugs vs motion-application rotation bugs.
+$("btn-freeze-bones").addEventListener("click", () => {
+  APP.freezeBones = !APP.freezeBones;
+  const btn = $("btn-freeze-bones");
+  btn.textContent = APP.freezeBones ? "Unfreeze Bones" : "Freeze Bones";
+  btn.style.background = APP.freezeBones ? "var(--accent)" : "";
+  // When freezing, snap every driven bone back to rest so the user immediately
+  // sees the rest pose (otherwise the last applied frame lingers).
+  if (APP.freezeBones && APP.charBones && APP.charBoneRestQuats) {
+    for (const k of Object.keys(APP.charBoneRestQuats)) {
+      const b = APP.charBones[k];
+      const r = APP.charBoneRestQuats[k];
+      if (b && r) b.quaternion.copy(r);
+    }
+  }
+  toast(APP.freezeBones ? "Bones frozen (rest pose)." : "Bones unfrozen.", "info");
+});
+
 /* =============================================================
    CHARACTER DRIVING (KalidoKit → CC5)
    For each bone: applied = correction * (kalidoQuat - baselineQuat) * inverseCorrection * restQuat
@@ -1739,6 +1933,7 @@ function getBaselineQuatForBone(logical) {
 
 function driveCharacterFromPose(pose) {
   if (!APP.charRoot) return;
+  if (APP.freezeBones) return;  // diagnostic: skip bone application, leave rest pose
   const t = performance.now() / 1000.0;
 
   for (const logical of DRIVEN_BONES) {
@@ -2664,6 +2859,7 @@ const STICK_PELVIS_HEIGHT_RATIO = 0.55; // pelvis ≈ 55% up from feet (typical 
 
 function syncStickFigureToCharacter() {
   if (!STICK.group) return;
+  if (APP.stickOverride) return;  // manual sliders are driving scale/position
   const charRoot = APP.charRoot;
   if (!charRoot) return;
 
@@ -3076,6 +3272,167 @@ function openPopoutCamera() {
   if (!popoutCamWin) { toast("Popout blocked by browser — allow popups for this page.", "error"); return; }
   toast("Camera popout opened — drag it to your second monitor.", "success");
 }
+
+/* =============================================================
+   DEBUG PANEL — manual rotation override + stick-figure controls + readouts
+   Lets Sammy dial in fixes when the auto-pipeline misbehaves.
+============================================================= */
+(function initDebugPanel() {
+  if (!document.getElementById("debug-panel")) return;
+
+  const $$ = (id) => document.getElementById(id);
+  const degToRad = (d) => d * Math.PI / 180;
+  const radToDeg = (r) => r * 180 / Math.PI;
+
+  // --- UK1 root rotation sliders ---
+  const rotXEl = $$("dbg-rotX"), rotYEl = $$("dbg-rotY"), rotZEl = $$("dbg-rotZ");
+  const rotXVal = $$("dbg-rotX-val"), rotYVal = $$("dbg-rotY-val"), rotZVal = $$("dbg-rotZ-val");
+  function applyRootRot() {
+    if (!APP.charRoot) return;
+    const rx = degToRad(parseFloat(rotXEl.value) || 0);
+    const ry = degToRad(parseFloat(rotYEl.value) || 0);
+    const rz = degToRad(parseFloat(rotZEl.value) || 0);
+    APP.charRoot.rotation.set(rx, ry, rz);
+    rotXVal.textContent = rotXEl.value + "°";
+    rotYVal.textContent = rotYEl.value + "°";
+    rotZVal.textContent = rotZEl.value + "°";
+  }
+  ["input","change"].forEach(ev => {
+    rotXEl.addEventListener(ev, applyRootRot);
+    rotYEl.addEventListener(ev, applyRootRot);
+    rotZEl.addEventListener(ev, applyRootRot);
+  });
+  $$("dbg-reset-rot").addEventListener("click", () => {
+    rotXEl.value = 0; rotYEl.value = 0; rotZEl.value = 0;
+    applyRootRot();
+  });
+
+  // --- Stick figure manual override ---
+  const stickOverrideEl = $$("dbg-stick-override");
+  const stickScaleEl = $$("dbg-stick-scale");
+  const stickXEl = $$("dbg-stick-x"), stickYEl = $$("dbg-stick-y"), stickZEl = $$("dbg-stick-z");
+  const stickRotYEl = $$("dbg-stick-roty");
+  const sValEls = {
+    scale: $$("dbg-stick-scale-val"),
+    x: $$("dbg-stick-x-val"), y: $$("dbg-stick-y-val"), z: $$("dbg-stick-z-val"),
+    roty: $$("dbg-stick-roty-val"),
+  };
+
+  function applyStickManual() {
+    sValEls.scale.textContent = stickScaleEl.value;
+    sValEls.x.textContent = stickXEl.value;
+    sValEls.y.textContent = stickYEl.value;
+    sValEls.z.textContent = stickZEl.value;
+    sValEls.roty.textContent = stickRotYEl.value + "°";
+    if (!APP.stickOverride) return;
+    if (!window.STICK || !STICK.group) return;
+    STICK.group.scale.setScalar(parseFloat(stickScaleEl.value) || 1);
+    STICK.group.position.set(
+      parseFloat(stickXEl.value) || 0,
+      parseFloat(stickYEl.value) || 0,
+      parseFloat(stickZEl.value) || 0
+    );
+    STICK.group.rotation.y = degToRad(parseFloat(stickRotYEl.value) || 0);
+  }
+  function updateStickSliderEnabled() {
+    const on = !!APP.stickOverride;
+    [stickScaleEl, stickXEl, stickYEl, stickZEl, stickRotYEl].forEach(el => {
+      el.disabled = !on;
+      el.style.opacity = on ? "1" : "0.4";
+    });
+  }
+  stickOverrideEl.addEventListener("change", () => {
+    APP.stickOverride = stickOverrideEl.checked;
+    updateStickSliderEnabled();
+    applyStickManual();
+  });
+  ["input","change"].forEach(ev => {
+    stickScaleEl.addEventListener(ev, applyStickManual);
+    stickXEl.addEventListener(ev, applyStickManual);
+    stickYEl.addEventListener(ev, applyStickManual);
+    stickZEl.addEventListener(ev, applyStickManual);
+    stickRotYEl.addEventListener(ev, applyStickManual);
+  });
+
+  // --- Save / load to localStorage ---
+  const STORE_KEY = "vrmocap_debug_v1";
+  $$("dbg-save").addEventListener("click", () => {
+    try {
+      const data = {
+        rotX: rotXEl.value, rotY: rotYEl.value, rotZ: rotZEl.value,
+        stickOverride: stickOverrideEl.checked,
+        stickScale: stickScaleEl.value, stickX: stickXEl.value,
+        stickY: stickYEl.value, stickZ: stickZEl.value,
+        stickRotY: stickRotYEl.value,
+      };
+      localStorage.setItem(STORE_KEY, JSON.stringify(data));
+      toast("Debug values saved.", "success");
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
+  });
+  function loadSaved() {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw);
+      if (d.rotX != null) rotXEl.value = d.rotX;
+      if (d.rotY != null) rotYEl.value = d.rotY;
+      if (d.rotZ != null) rotZEl.value = d.rotZ;
+      if (d.stickScale != null) stickScaleEl.value = d.stickScale;
+      if (d.stickX != null) stickXEl.value = d.stickX;
+      if (d.stickY != null) stickYEl.value = d.stickY;
+      if (d.stickZ != null) stickZEl.value = d.stickZ;
+      if (d.stickRotY != null) stickRotYEl.value = d.stickRotY;
+      stickOverrideEl.checked = !!d.stickOverride;
+      APP.stickOverride = !!d.stickOverride;
+      applyRootRot();
+      updateStickSliderEnabled();
+      applyStickManual();
+      console.log("[debug] loaded saved values from localStorage");
+    } catch (e) { console.warn("[debug] loadSaved failed:", e); }
+  }
+  loadSaved();
+  updateStickSliderEnabled();
+
+  // --- Live readouts (throttled to ~10fps) ---
+  let lastReadout = 0;
+  function updateReadouts() {
+    const now = performance.now();
+    if (now - lastReadout < 100) return;
+    lastReadout = now;
+
+    // Hip bone euler
+    const hipBone = APP.charBones && APP.charBones.Hips;
+    if (hipBone) {
+      const e = new THREE.Euler().setFromQuaternion(hipBone.quaternion, "XYZ");
+      $$("dbg-hip-rot").textContent =
+        `X=${radToDeg(e.x).toFixed(1)}° Y=${radToDeg(e.y).toFixed(1)}° Z=${radToDeg(e.z).toFixed(1)}°`;
+    }
+    // MediaPipe hip (last KalidoKit pose for Hips, raw)
+    const mpHip = APP.lastKalidoHips;
+    if (mpHip) {
+      $$("dbg-mp-hip").textContent =
+        `X=${(mpHip.x||0).toFixed(2)} Y=${(mpHip.y||0).toFixed(2)} Z=${(mpHip.z||0).toFixed(2)}`;
+    }
+    // Calibration offset (T-pose KalidoKit Hips)
+    const cal = APP.calibrationBaseline && APP.calibrationBaseline.kalidoKitPose
+                && APP.calibrationBaseline.kalidoKitPose.Hips;
+    if (cal) {
+      $$("dbg-cal-off").textContent =
+        `X=${(cal.x||0).toFixed(2)} Y=${(cal.y||0).toFixed(2)} Z=${(cal.z||0).toFixed(2)}`;
+    } else {
+      $$("dbg-cal-off").textContent = "(not calibrated)";
+    }
+    // Last MediaPipe frame age
+    if (APP.lastMpFrameTime) {
+      const age = (now - APP.lastMpFrameTime).toFixed(0);
+      $$("dbg-mp-age").textContent = age + "ms";
+    } else {
+      $$("dbg-mp-age").textContent = "(no frames yet)";
+    }
+  }
+  // Hook into the global animate loop via setInterval (decoupled, simple)
+  setInterval(updateReadouts, 100);
+})();
 
 /* If we're loaded in popout mode, attach to the opener and render only the
    relevant panel. */
