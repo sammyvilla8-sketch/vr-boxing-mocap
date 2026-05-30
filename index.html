@@ -361,6 +361,7 @@
       <canvas id="three"></canvas>
 
       <div id="scene-overlay-controls">
+        <button id="btn-frame"      title="Frame the character so the full body is visible (F)">Frame (F)</button>
         <button id="btn-split"      title="Side-by-side webcam + 3D panels (V)">Split (V)</button>
         <button id="btn-big3d"      title="Shrink camera corner thumb to ~200px (B)">Big 3D (B)</button>
         <button id="btn-popout-cam" title="Open the camera in its own window (C) — drag to second monitor">Popout Cam (C)</button>
@@ -464,7 +465,7 @@
     <div class="stat"><span class="dot" id="dot-cal"></span><span>Calibrated: <b id="stat-cal">No</b></span></div>
     <div class="stat"><span class="dot" id="dot-rec"></span><span>Frames: <b id="stat-frames">0</b></span></div>
     <div class="stat"><span class="dot"></span><span>Takes: <b id="stat-takes">0</b></span></div>
-    <div class="stat" style="margin-left:auto;"><span>Hotkeys: 1/2/3=stick  S=skel  V=split  B=big 3D  C=popout cam  P=popout 3D  I/O=trim  Space=play</span></div>
+    <div class="stat" style="margin-left:auto;"><span>Hotkeys: 1/2/3=stick  S=skel  F=frame  V=split  B=big 3D  C=popout cam  P=popout 3D  I/O=trim  Space=play</span></div>
   </div>
 
 </div>
@@ -779,19 +780,95 @@ $("file-model").addEventListener("change", async e => {
   });
 });
 
+/* Robust character bounds: skinned-mesh Box3.setFromObject is unreliable
+   until matrices have been updated and skinning has run, so we walk the
+   bones (whose world positions ARE accurate after one updateMatrixWorld)
+   to get a sane height. */
+function getCharacterBounds(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  const tmp = new THREE.Vector3();
+  let bones = 0;
+  root.traverse(o => {
+    if (o.isBone || o.type === "Bone") {
+      o.getWorldPosition(tmp);
+      if (bones === 0) box.set(tmp.clone(), tmp.clone());
+      else box.expandByPoint(tmp);
+      bones++;
+    } else if (o.isMesh && !o.isSkinnedMesh && o.geometry) {
+      const mb = new THREE.Box3().setFromObject(o);
+      if (mb.isEmpty() === false) {
+        if (bones === 0 && box.isEmpty()) box.copy(mb); else box.union(mb);
+      }
+    }
+  });
+  // Fallback to standard Box3 if we got nothing
+  if (box.isEmpty()) box.setFromObject(root);
+  return box;
+}
+
+/* Frame the OrbitControls camera so the character is fully visible.
+   Sets target to character center and pulls the camera back along the
+   current view direction by a distance derived from FOV + character height.
+   Also clamps minDistance / maxDistance so the user can rotate freely without
+   accidentally zooming into the foot or out into oblivion. */
+function frameCharacter() {
+  if (!APP.charRoot || !APP.camera || !APP.controls) return;
+  const box = getCharacterBounds(APP.charRoot);
+  const sz = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const height = Math.max(sz.y, 0.001);
+
+  // distance that frames the character vertically with ~40% headroom
+  const fov = APP.camera.fov * Math.PI / 180;
+  const distance = (height * 0.6) / Math.tan(fov / 2);
+
+  // Preserve roughly the current view direction so a manual orbit isn't reset
+  const view = new THREE.Vector3();
+  APP.camera.getWorldDirection(view);
+  view.multiplyScalar(-1).normalize();
+  if (view.lengthSq() < 0.01) view.set(0.6, 0.25, 0.85).normalize();
+
+  APP.controls.target.copy(center);
+  APP.camera.position.copy(center).addScaledVector(view, distance);
+
+  // Allow rotate + zoom but bound it so user can't lose the character
+  APP.controls.minDistance = height * 0.25;
+  APP.controls.maxDistance = height * 12;
+
+  // Update near/far for the new scale
+  APP.camera.near = Math.max(0.01, height * 0.01);
+  APP.camera.far  = height * 200;
+  APP.camera.updateProjectionMatrix();
+  APP.controls.update();
+  console.log(`[frame] character height ${height.toFixed(2)}m, camera @ ${distance.toFixed(2)}m`);
+}
+window.frameCharacter = frameCharacter;
+
 function onModelLoaded(gltf, slot) {
   const root = gltf.scene;
 
-  // Auto-scale toward ~1.8m
-  const box = new THREE.Box3().setFromObject(root);
+  // 1. Force matrices to be up-to-date so bounds reflect actual world positions
+  root.updateMatrixWorld(true);
+
+  // 2. Get the REAL bounds (bone-based, robust to skinned-mesh quirks)
+  const box = getCharacterBounds(root);
   const sz = box.getSize(new THREE.Vector3());
-  if (sz.y < 0.5 || sz.y > 3.0) {
-    const s = 1.8 / Math.max(sz.y, 1e-3);
+
+  // 3. Auto-scale toward ~1.8m if the GLB came in at an unreasonable scale.
+  //    Guard the divide so a near-zero height (skeleton not unfolded yet)
+  //    doesn't multiply by infinity and explode the character.
+  if (isFinite(sz.y) && sz.y > 0.02 && (sz.y < 0.5 || sz.y > 3.0)) {
+    const s = 1.8 / sz.y;
     root.scale.multiplyScalar(s);
-    box.setFromObject(root);
+    root.updateMatrixWorld(true);
+    box.copy(getCharacterBounds(root));
   }
   const newSz = box.getSize(new THREE.Vector3());
-  root.position.y -= box.min.y;  // drop to floor
+
+  // 4. Drop to floor (Y=0) using the recomputed bounds
+  root.position.y -= box.min.y;
+  root.updateMatrixWorld(true);
 
   if (slot === "character") {
     if (APP.charRoot) APP.scene.remove(APP.charRoot);
@@ -806,6 +883,9 @@ function onModelLoaded(gltf, slot) {
     buildFootHUD();
     APP.charMixer = new THREE.AnimationMixer(root);
     $("model-info").innerHTML = `Loaded. Height: ${newSz.y.toFixed(2)}m. Bones: <b>${Object.keys(APP._allBones).length}</b>. Mapped: <b>${Object.keys(APP.charBones).length}/${DRIVEN_BONES.length}</b>`;
+
+    // 5. Frame the camera on the character so it fits the view
+    frameCharacter();
   } else {
     if (APP.reference) APP.scene.remove(APP.reference);
     APP.reference = root;
@@ -2386,6 +2466,7 @@ document.addEventListener("keydown", e => {
   else if (e.key === "b" || e.key === "B") { toggleBig3D(); }
   else if (e.key === "c" || e.key === "C") { openPopoutCamera(); }
   else if (e.key === "p" || e.key === "P") { openPopout3D(); }
+  else if (e.key === "f" || e.key === "F") { frameCharacter(); toast("Re-framed character.", ""); }
 });
 
 /* =============================================================
@@ -2686,6 +2767,7 @@ if (initPopoutMode()) {
   updateModeStatus();
 
   // Scene-overlay buttons (only meaningful in normal mode)
+  $("btn-frame").addEventListener("click", () => { frameCharacter(); toast("Re-framed character.", ""); });
   $("btn-split").addEventListener("click", toggleSplitView);
   $("btn-big3d").addEventListener("click", toggleBig3D);
   $("btn-popout-cam").addEventListener("click", openPopoutCamera);

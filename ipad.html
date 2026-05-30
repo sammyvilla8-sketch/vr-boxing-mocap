@@ -576,6 +576,7 @@
         <canvas id="three"></canvas>
 
         <div id="scene-toolbar">
+          <button id="btn-frame"  title="Frame the character so the full body is visible">Frame</button>
           <button id="btn-split"  title="Side-by-side webcam + 3D panels">Split</button>
           <button id="btn-big3d"  title="Shrink camera corner thumb to ~160px">Big 3D</button>
         </div>
@@ -1150,30 +1151,92 @@ $("btn-clear-uk1-cache").addEventListener("click", async () => {
   toast("UK1 cache cleared.", "success");
 });
 
+/* Robust bone-based bounds for skinned meshes (Box3.setFromObject is
+   unreliable on a SkinnedMesh until matrices have been updated). */
+function getCharacterBounds(root){
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  const tmp = new THREE.Vector3();
+  let bones = 0;
+  root.traverse(o => {
+    if (o.isBone || o.type === "Bone"){
+      o.getWorldPosition(tmp);
+      if (bones === 0) box.set(tmp.clone(), tmp.clone());
+      else box.expandByPoint(tmp);
+      bones++;
+    } else if (o.isMesh && !o.isSkinnedMesh && o.geometry){
+      const mb = new THREE.Box3().setFromObject(o);
+      if (!mb.isEmpty()) { if (box.isEmpty()) box.copy(mb); else box.union(mb); }
+    }
+  });
+  if (box.isEmpty()) box.setFromObject(root);
+  return box;
+}
+
+/* Frame the OrbitControls camera on the character. Clamps min/max
+   zoom so the user can rotate and zoom without losing the character. */
+function frameCharacter(){
+  if (!APP.charRoot || !APP.camera || !APP.controls) return;
+  const box = getCharacterBounds(APP.charRoot);
+  const sz = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const height = Math.max(sz.y, 0.001);
+
+  const fov = APP.camera.fov * Math.PI / 180;
+  const distance = (height * 0.6) / Math.tan(fov / 2);
+
+  // Preserve roughly the current view direction
+  const view = new THREE.Vector3();
+  APP.camera.getWorldDirection(view);
+  view.multiplyScalar(-1).normalize();
+  if (view.lengthSq() < 0.01) view.set(0.6, 0.25, 0.85).normalize();
+
+  APP.controls.target.copy(center);
+  APP.camera.position.copy(center).addScaledVector(view, distance);
+
+  APP.controls.minDistance = height * 0.25;
+  APP.controls.maxDistance = height * 12;
+  APP.camera.near = Math.max(0.01, height * 0.01);
+  APP.camera.far  = height * 200;
+  APP.camera.updateProjectionMatrix();
+  APP.controls.update();
+  console.log(`[frame] character height ${height.toFixed(2)}m, camera @ ${distance.toFixed(2)}m`);
+}
+window.frameCharacter = frameCharacter;
+
 function onModelLoaded(gltf){
   const root = gltf.scene;
+  root.updateMatrixWorld(true);
 
-  // Auto-scale toward ~1.8m
-  const box=new THREE.Box3().setFromObject(root);
-  const sz=box.getSize(new THREE.Vector3());
-  if (sz.y < 0.5 || sz.y > 3.0){
-    const s = 1.8 / Math.max(sz.y, 1e-3);
+  // Bone-based size measurement (robust to skinned-mesh quirks)
+  const box = getCharacterBounds(root);
+  const sz = box.getSize(new THREE.Vector3());
+
+  // Auto-scale toward ~1.8m if GLB came in too small/large.
+  // Guard the divide so a near-zero measurement doesn't explode the model.
+  if (isFinite(sz.y) && sz.y > 0.02 && (sz.y < 0.5 || sz.y > 3.0)){
+    const s = 1.8 / sz.y;
     root.scale.multiplyScalar(s);
-    box.setFromObject(root);
+    root.updateMatrixWorld(true);
+    box.copy(getCharacterBounds(root));
   }
-  const newSz=box.getSize(new THREE.Vector3());
+  const newSz = box.getSize(new THREE.Vector3());
   root.position.y -= box.min.y;
+  root.updateMatrixWorld(true);
 
   if (APP.charRoot) APP.scene.remove(APP.charRoot);
-  APP.charRoot=root;
+  APP.charRoot = root;
   APP.scene.add(root);
 
   enumerateBones(root);
   buildSkeletonHelper(root);
-  APP.charMixer=new THREE.AnimationMixer(root);
+  APP.charMixer = new THREE.AnimationMixer(root);
 
   $("model-info").innerHTML = `Loaded. Height: ${newSz.y.toFixed(2)}m. Bones mapped: <b>${Object.keys(APP.charBones).length}/${DRIVEN_BONES.length}</b>`;
   $("btn-rec").disabled = false;
+
+  // Frame the camera so the whole character is visible
+  frameCharacter();
 }
 
 function enumerateBones(root){
@@ -2069,6 +2132,7 @@ function toggleBig3D(){
   setTimeout(onResize, 60);
   toast(on ? "Big 3D — camera shrunk to small thumb." : "Camera corner overlay restored.", "");
 }
+$("btn-frame").addEventListener("click", () => { frameCharacter(); toast("Re-framed character.", ""); });
 $("btn-split").addEventListener("click", toggleSplitView);
 $("btn-big3d").addEventListener("click", toggleBig3D);
 
