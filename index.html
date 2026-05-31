@@ -1214,6 +1214,9 @@ function onModelLoaded(gltf, slot) {
       ? verifyBox.clone()
       : new THREE.Box3(new THREE.Vector3(-0.5, 0, -0.5), new THREE.Vector3(0.5, 1.75, 0.5));
     enumerateBones(root);
+    // Cache per-bone lengths in SCENE units so the stick figure can
+    // be rebuilt with UK1's actual proportions (not MediaPipe's).
+    try { cacheUk1BoneLengths(); } catch (e) { console.warn("[bones] cacheUk1BoneLengths failed:", e); }
     buildSkeletonHelper(root);
     buildAxesHelpers();
     buildBoneCorrectionSliders();
@@ -1812,21 +1815,9 @@ function finalizeCalibration() {
     kalidoKitPose: baselinePose,
   };
 
-  // -----------------------------------------------------------------
-  // Auto height-scale (v3 — shoulder-span reference).
-  //
-  // KalidoKit-style: shoulders are the most reliable reference because
-  // they are visible whenever the upper body is, regardless of seated /
-  // standing posture or leg-off-frame. We compare the user's shoulder
-  // span (MP world meters) to UK1's shoulder span (LeftUpperArm root
-  // vs RightUpperArm root world positions = shoulder joint positions).
-  //
-  // If legs ARE visible (ankle visibility >= 0.5 on either side), we ALSO
-  // compute a full-height check and average the two for stability.
-  // -----------------------------------------------------------------
+  // Auto-scale (v3 shoulder-span; KalidoKit-style).
   let autoScaleMsg = "";
   try {
-    // Average each landmark across all samples
     const acc = new Array(33).fill(0).map(() => ({ x:0, y:0, z:0, vis:0, n:0 }));
     for (const samp of APP.calibrationSamples) {
       const lms = samp.poseWorld;
@@ -1842,34 +1833,25 @@ function finalizeCalibration() {
     }
     const avg = (a) => a.n > 0 ? { x: a.x/a.n, y: a.y/a.n, z: a.z/a.n, vis: a.vis/a.n } : null;
     const aLSho = avg(acc[11]),  aRSho = avg(acc[12]);
-    const aLHip = avg(acc[23]),  aRHip = avg(acc[24]);
     const aLAnk = avg(acc[27]),  aRAnk = avg(acc[28]);
-    const aNose = avg(acc[0]);
 
-    // --- MP shoulder span (primary, near-always available) ---
     let mpShoulderSpan = 0;
     if (aLSho && aRSho && aLSho.vis > 0.3 && aRSho.vis > 0.3) {
       mpShoulderSpan = Math.hypot(aLSho.x - aRSho.x, aLSho.y - aRSho.y, aLSho.z - aRSho.z);
     }
-    // --- MP full-body height (only if ankles visible) ---
     const ankleVis = Math.max(aLAnk ? aLAnk.vis : 0, aRAnk ? aRAnk.vis : 0);
     const legsVisible = ankleVis >= 0.5;
     let mpFullHeight = 0;
     if (legsVisible) {
       let minY = Infinity, maxY = -Infinity;
       for (let i = 0; i < 33; i++) {
-        const a = avg(acc[i]); if (!a) continue;
-        if (a.vis < 0.5) continue;
+        const a = avg(acc[i]); if (!a || a.vis < 0.5) continue;
         if (a.y < minY) minY = a.y;
         if (a.y > maxY) maxY = a.y;
       }
       mpFullHeight = Math.abs(maxY - minY);
     }
-    console.log("[calib] mpShoulderSpan:", mpShoulderSpan.toFixed(3),
-                "mpFullHeight:", mpFullHeight.toFixed(3),
-                "legsVisible:", legsVisible);
 
-    // --- UK1 measurements from bones (worldPos of UpperArm bones = shoulder joints) ---
     let uk1ShoulderSpan = 0, uk1Height = 0;
     try {
       const lUA = APP.charBones && APP.charBones.LeftUpperArm;
@@ -1881,43 +1863,39 @@ function finalizeCalibration() {
       }
       if (APP.charRestBox && !APP.charRestBox.isEmpty()) {
         uk1Height = APP.charRestBox.getSize(new THREE.Vector3()).y;
-      } else if (APP.charRoot && typeof measureSkinnedCharacterBounds === "function") {
-        const b = measureSkinnedCharacterBounds(APP.charRoot);
-        if (b) uk1Height = b.getSize(new THREE.Vector3()).y;
       }
     } catch (e) { console.warn("[calib] uk1 measure failed:", e); }
-    console.log("[calib] uk1ShoulderSpan:", uk1ShoulderSpan.toFixed(3),
-                "uk1Height:", uk1Height.toFixed(3));
 
-    // --- Compute scale factor ---
+    // Convert uk1ShoulderSpan from CC5 internal scale to rendered (scene) units
+    // using the same scaleFactor cached at character-load time.
+    const uk1Scale = APP.uk1InternalToScene || 1.0;
+    const uk1ShoulderSpanScene = uk1ShoulderSpan * uk1Scale;
+
     let scaleFromShoulder = 0, scaleFromHeight = 0, finalScale = 0;
-    if (mpShoulderSpan > 0.05 && uk1ShoulderSpan > 0.05) {
-      scaleFromShoulder = uk1ShoulderSpan / mpShoulderSpan;
+    if (mpShoulderSpan > 0.05 && uk1ShoulderSpanScene > 0.05) {
+      scaleFromShoulder = uk1ShoulderSpanScene / mpShoulderSpan;
     }
     if (legsVisible && mpFullHeight > 0.1 && uk1Height > 0.1) {
       scaleFromHeight = uk1Height / mpFullHeight;
     }
     if (scaleFromShoulder > 0 && scaleFromHeight > 0) {
-      // Average — shoulder gets 60% weight (more stable), height 40%
       finalScale = 0.6 * scaleFromShoulder + 0.4 * scaleFromHeight;
     } else if (scaleFromShoulder > 0) {
       finalScale = scaleFromShoulder;
     } else if (scaleFromHeight > 0) {
       finalScale = scaleFromHeight;
     }
-    console.log("[calib] scaleFromShoulder:", scaleFromShoulder.toFixed(3),
-                "scaleFromHeight:", scaleFromHeight.toFixed(3),
-                "finalScale:", finalScale.toFixed(3));
+    console.log("[calib] mpShoulderSpan", mpShoulderSpan.toFixed(3),
+                "uk1ShoulderSpanScene", uk1ShoulderSpanScene.toFixed(3),
+                "scaleFromShoulder", scaleFromShoulder.toFixed(3),
+                "scaleFromHeight", scaleFromHeight.toFixed(3),
+                "finalScale", finalScale.toFixed(3));
 
     if (finalScale > 0) {
-      // Persist as a SYNTHETIC userHeightMP that syncStickFigureToCharacter
-      // will divide uk1Size.y by to reproduce the same scale. This keeps
-      // the existing sync function compatible with shoulder-derived scales.
       APP.userHeightMP = (uk1Height > 0.1) ? (uk1Height / finalScale) : 1.0;
       if (window.STICK && STICK.group) {
         STICK.group.scale.setScalar(finalScale);
       }
-      // Sync the manual slider
       const slEl = document.getElementById("dbg-stick-scale");
       const slVal = document.getElementById("dbg-stick-scale-val");
       if (slEl) {
@@ -1929,11 +1907,10 @@ function finalizeCalibration() {
       APP.savedStickScale = finalScale;
       try { localStorage.setItem("vr_boxing_stick_scale", String(finalScale)); } catch (e) {}
       const refType = (scaleFromShoulder > 0 && scaleFromHeight > 0) ? "shoulder+height"
-                    : (scaleFromShoulder > 0) ? "shoulder-only (legs off-frame)"
-                    : "height-only";
+                    : (scaleFromShoulder > 0) ? "shoulder-only" : "height-only";
       autoScaleMsg = " Scale " + finalScale.toFixed(2) + "x (" + refType + ")";
     } else {
-      console.warn("[calib] no usable reference (shoulders or legs)");
+      console.warn("[calib] no usable reference");
     }
   } catch (e) {
     console.warn("[calib] auto height-scale failed:", e);
@@ -3042,8 +3019,6 @@ function syncStickFigureToCharacter() {
   const uk1Size = uk1Box.getSize(new THREE.Vector3());
   const uk1Center = uk1Box.getCenter(new THREE.Vector3());
 
-  // Use calibrated user height if available (set by finalizeCalibration);
-  // otherwise fall back to the static MediaPipe baseline (~1.75m).
   const baselineHeight = (APP.userHeightMP && APP.userHeightMP > 0.1)
     ? APP.userHeightMP
     : STICK_MEDIAPIPE_BASELINE_HEIGHT;
@@ -3080,6 +3055,66 @@ function syncStickFigureToCharacter() {
     "uk1Size (" + uk1Size.toArray().map(v => v.toFixed(2)).join(",") + ")",
     "uk1Box.min.y", uk1Box.min.y.toFixed(2),
     "mode", STICK.mode);
+}
+
+/* Cache UK1's per-bone segment lengths in SCENE (rendered) units.
+   CC5 rig has a baked-in Armature scale so bone.getWorldPosition()
+   returns "internal" coords that differ from the rendered bbox scale.
+   We compute the internal-to-scene ratio once from the head-to-foot
+   span vs the bbox height, then multiply all bone lengths by it.   */
+function cacheUk1BoneLengths() {
+  if (!APP.charBones || !APP.charRoot) return;
+  APP.charRoot.updateMatrixWorld(true);
+  const pos = {};
+  const want = ["Hips","Spine","Chest","Head",
+                "LeftUpperArm","LeftLowerArm","LeftHand",
+                "RightUpperArm","RightLowerArm","RightHand",
+                "LeftUpperLeg","LeftLowerLeg","LeftFoot",
+                "RightUpperLeg","RightLowerLeg","RightFoot"];
+  for (const n of want) {
+    const b = APP.charBones[n];
+    if (b) {
+      const p = new THREE.Vector3();
+      b.getWorldPosition(p);
+      pos[n] = p;
+    }
+  }
+
+  // Internal head-to-foot Y span (CC5 raw scale)
+  let internalHeight = 0;
+  if (pos.Head && (pos.LeftFoot || pos.RightFoot)) {
+    const footY = Math.min(
+      pos.LeftFoot  ? pos.LeftFoot.y  :  Infinity,
+      pos.RightFoot ? pos.RightFoot.y :  Infinity
+    );
+    internalHeight = Math.abs(pos.Head.y - footY);
+  }
+  const renderedHeight = (APP.charRestBox && !APP.charRestBox.isEmpty())
+    ? APP.charRestBox.getSize(new THREE.Vector3()).y
+    : 1.8;
+  const internalToScene = (internalHeight > 1e-4) ? (renderedHeight / internalHeight) : 1.0;
+  APP.uk1InternalToScene = internalToScene;
+
+  // Helper: distance between two bones in SCENE units
+  const segLen = (a, b) => {
+    if (!pos[a] || !pos[b]) return 0;
+    return pos[a].distanceTo(pos[b]) * internalToScene;
+  };
+
+  APP.uk1BoneLengths = {
+    LeftUpperArm:  segLen("LeftUpperArm",  "LeftLowerArm"),
+    LeftLowerArm:  segLen("LeftLowerArm",  "LeftHand"),
+    RightUpperArm: segLen("RightUpperArm", "RightLowerArm"),
+    RightLowerArm: segLen("RightLowerArm", "RightHand"),
+    LeftUpperLeg:  segLen("LeftUpperLeg",  "LeftLowerLeg"),
+    LeftLowerLeg:  segLen("LeftLowerLeg",  "LeftFoot"),
+    RightUpperLeg: segLen("RightUpperLeg", "RightLowerLeg"),
+    RightLowerLeg: segLen("RightLowerLeg", "RightFoot"),
+    ShoulderSpan:  (pos.LeftUpperArm && pos.RightUpperArm)
+                   ? pos.LeftUpperArm.distanceTo(pos.RightUpperArm) * internalToScene : 0,
+  };
+  console.log("[bones] internalToScene=", internalToScene.toFixed(4),
+              "lengths(scene):", APP.uk1BoneLengths);
 }
 
 function updateStickFigure(poseWorldLandmarks) {
@@ -3124,37 +3159,101 @@ function updateStickFigure(poseWorldLandmarks) {
     return [ clamp(cx), clamp(cy), clamp(cz) ];
   }
 
-  // Update joint sphere positions
+  // ---- Step 1: place every joint at its MP-derived local position ----
+  // (subject to permissive visibility threshold)
+  const localPos = new Array(33);
+  const visOK = new Array(33);
   for (let i = 0; i < 33; i++) {
     const lm = poseWorldLandmarks[i];
-    const j = STICK.joints[i];
-    // KalidoKit-style permissive threshold (0.2) — better to render a slightly
-    // wobbly joint than to lose limbs entirely when MP visibility dips.
-    if (!lm || lm.visibility !== undefined && lm.visibility < 0.2) {
-      j.visible = false; j._hasData = false;
+    if (!lm || (lm.visibility !== undefined && lm.visibility < 0.2)) {
+      localPos[i] = null;
+      visOK[i] = false;
       continue;
     }
-    const w = lmToLocal(lm);
-    j.position.set(w[0], w[1], w[2]);
-    j._hasData = true;
-    j.visible = true;
+    localPos[i] = lmToLocal(lm);  // [x,y,z]
+    visOK[i] = true;
   }
 
-  // Update line segment positions
+  // ---- Step 2: per-bone length correction (chain walk from each chain root) ----
+  // Replace each segment's LOCAL length with UK1's bone length (scene units / group.scale).
+  // Group.scale is the global multiplier so local = scene / scale.
+  const groupScale = (STICK.group && STICK.group.scale && STICK.group.scale.x > 1e-4)
+                     ? STICK.group.scale.x : 1.0;
+  const boneLen = APP.uk1BoneLengths || null;
+
+  function correctSegment(parentIdx, childIdx, uk1BoneName) {
+    if (!localPos[parentIdx] || !localPos[childIdx]) return;
+    if (!boneLen || !boneLen[uk1BoneName] || boneLen[uk1BoneName] < 1e-4) return;
+    const p = localPos[parentIdx];
+    const c = localPos[childIdx];
+    const dx = c[0]-p[0], dy = c[1]-p[1], dz = c[2]-p[2];
+    const mpLen = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    if (mpLen < 1e-4) return;
+    const targetLocalLen = boneLen[uk1BoneName] / groupScale;
+    const k = targetLocalLen / mpLen;
+    localPos[childIdx] = [p[0] + dx*k, p[1] + dy*k, p[2] + dz*k];
+  }
+
+  function shiftSubLandmark(parentIdx, childIdx) {
+    // Children of a corrected joint (hand fingers, foot details) — translate
+    // them by the same delta the parent moved so they stay attached.
+    if (!localPos[parentIdx] || !localPos[childIdx]) return;
+    const lmP = poseWorldLandmarks[parentIdx];
+    if (!lmP) return;
+    const origP = lmToLocal(lmP);
+    const lmC = poseWorldLandmarks[childIdx];
+    if (!lmC) return;
+    const origC = lmToLocal(lmC);
+    const corrP = localPos[parentIdx];
+    localPos[childIdx] = [
+      corrP[0] + (origC[0] - origP[0]),
+      corrP[1] + (origC[1] - origP[1]),
+      corrP[2] + (origC[2] - origP[2]),
+    ];
+  }
+
+  // Arms
+  correctSegment(11, 13, "LeftUpperArm");
+  correctSegment(13, 15, "LeftLowerArm");
+  correctSegment(12, 14, "RightUpperArm");
+  correctSegment(14, 16, "RightLowerArm");
+  // Legs
+  correctSegment(23, 25, "LeftUpperLeg");
+  correctSegment(25, 27, "LeftLowerLeg");
+  correctSegment(24, 26, "RightUpperLeg");
+  correctSegment(26, 28, "RightLowerLeg");
+  // Hand sub-landmarks follow the wrist
+  shiftSubLandmark(15, 17); shiftSubLandmark(15, 19); shiftSubLandmark(15, 21);
+  shiftSubLandmark(16, 18); shiftSubLandmark(16, 20); shiftSubLandmark(16, 22);
+  // Foot sub-landmarks follow the ankle
+  shiftSubLandmark(27, 29); shiftSubLandmark(27, 31);
+  shiftSubLandmark(28, 30); shiftSubLandmark(28, 32);
+
+  // ---- Step 3: apply corrected positions to joint meshes ----
+  for (let i = 0; i < 33; i++) {
+    const j = STICK.joints[i];
+    if (localPos[i]) {
+      j.position.set(localPos[i][0], localPos[i][1], localPos[i][2]);
+      j._hasData = true;
+      j.visible = true;
+    } else {
+      j.visible = false; j._hasData = false;
+    }
+  }
+
+  // ---- Step 4: line segments using corrected positions ----
   const pos = STICK.lineGeom.attributes.position.array;
   for (let i = 0; i < POSE_CONNECTIONS.length; i++) {
     const [a, b] = POSE_CONNECTIONS[i];
     const la = poseWorldLandmarks[a], lb = poseWorldLandmarks[b];
     const base = i * 6;
-    // Permissive line threshold to match joint threshold + small margin.
     const visA = la && (la.visibility === undefined || la.visibility >= 0.25);
     const visB = lb && (lb.visibility === undefined || lb.visibility >= 0.25);
-    if (la && lb && visA && visB) {
-      const wa = lmToLocal(la), wb = lmToLocal(lb);
+    if (la && lb && visA && visB && localPos[a] && localPos[b]) {
+      const wa = localPos[a], wb = localPos[b];
       pos[base+0] = wa[0]; pos[base+1] = wa[1]; pos[base+2] = wa[2];
       pos[base+3] = wb[0]; pos[base+4] = wb[1]; pos[base+5] = wb[2];
     } else {
-      // Collapse line to a zero-length point at origin so it's invisible
       pos[base+0]=pos[base+1]=pos[base+2]=0;
       pos[base+3]=pos[base+4]=pos[base+5]=0;
     }
@@ -3519,8 +3618,6 @@ function openPopoutCamera() {
   stickOverrideEl.addEventListener("change", () => {
     const app = getAPP();
     if (app) app.stickOverride = stickOverrideEl.checked;
-    // On TURN-ON: snapshot current STICK group state into sliders so
-    // flipping override doesn't jump the figure.
     if (stickOverrideEl.checked) {
       const stk = getSTICK();
       if (stk && stk.group) {
