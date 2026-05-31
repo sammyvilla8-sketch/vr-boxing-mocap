@@ -466,22 +466,22 @@
           </div>
           <div class="slider-row">
             <label>Scale</label>
-            <input type="range" id="dbg-stick-scale" min="1" max="2000" step="1" value="500" />
-            <span class="val" id="dbg-stick-scale-val">500</span>
+            <input type="range" id="dbg-stick-scale" min="0.1" max="5" step="0.05" value="1" />
+            <span class="val" id="dbg-stick-scale-val">1</span>
           </div>
           <div class="slider-row">
             <label>Pos X</label>
-            <input type="range" id="dbg-stick-x" min="-1000" max="1000" step="1" value="0" />
+            <input type="range" id="dbg-stick-x" min="-3" max="3" step="0.05" value="0" />
             <span class="val" id="dbg-stick-x-val">0</span>
           </div>
           <div class="slider-row">
             <label>Pos Y</label>
-            <input type="range" id="dbg-stick-y" min="-500" max="1500" step="1" value="0" />
+            <input type="range" id="dbg-stick-y" min="-2" max="3" step="0.05" value="0" />
             <span class="val" id="dbg-stick-y-val">0</span>
           </div>
           <div class="slider-row">
             <label>Pos Z</label>
-            <input type="range" id="dbg-stick-z" min="-1000" max="1000" step="1" value="0" />
+            <input type="range" id="dbg-stick-z" min="-3" max="3" step="0.05" value="0" />
             <span class="val" id="dbg-stick-z-val">0</span>
           </div>
           <div class="slider-row">
@@ -1811,13 +1811,85 @@ function finalizeCalibration() {
     landmarks: last.pose,
     kalidoKitPose: baselinePose,
   };
+
+  // -----------------------------------------------------------------
+  // Auto height-scale: average the 3s of captured worldLandmarks, take
+  // the full Y extent (lowest visible point -> highest visible point),
+  // and scale STICK.group so user-height matches UK1 height. This
+  // ALWAYS runs during calibration regardless of the manual-override
+  // checkbox; manual sliders are fine-tuning AFTER this auto-fit.
+  // -----------------------------------------------------------------
+  let autoScaleMsg = "";
+  try {
+    const acc = new Array(33).fill(0).map(() => ({ x:0, y:0, z:0, vis:0, n:0 }));
+    for (const samp of APP.calibrationSamples) {
+      const lms = samp.poseWorld;
+      if (!lms) continue;
+      for (let i = 0; i < lms.length && i < 33; i++) {
+        const lm = lms[i]; if (!lm) continue;
+        acc[i].x += lm.x || 0;
+        acc[i].y += lm.y || 0;
+        acc[i].z += lm.z || 0;
+        acc[i].vis += (lm.visibility != null ? lm.visibility : 1);
+        acc[i].n  += 1;
+      }
+    }
+    let minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < 33; i++) {
+      if (acc[i].n === 0) continue;
+      const vis = acc[i].vis / acc[i].n;
+      if (vis < 0.3) continue;
+      const y = acc[i].y / acc[i].n;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const userHeight = Math.abs(maxY - minY);
+    console.log("[calib] user height (MediaPipe meters):", userHeight.toFixed(3));
+
+    let uk1Height = 0;
+    if (APP.charRestBox && !APP.charRestBox.isEmpty()) {
+      uk1Height = APP.charRestBox.getSize(new THREE.Vector3()).y;
+    } else if (APP.charRoot && typeof measureSkinnedCharacterBounds === "function") {
+      try {
+        const b = measureSkinnedCharacterBounds(APP.charRoot);
+        if (b) uk1Height = b.getSize(new THREE.Vector3()).y;
+      } catch (e) {}
+    }
+    console.log("[calib] UK1 height (scene units):", uk1Height.toFixed(3));
+
+    if (userHeight > 0.1 && uk1Height > 0.1) {
+      const heightScale = uk1Height / userHeight;
+      console.log("[calib] auto height-scale factor:", heightScale.toFixed(3));
+      APP.userHeightMP = userHeight;
+      if (window.STICK && STICK.group) {
+        STICK.group.scale.setScalar(heightScale);
+      }
+      const slEl = document.getElementById("dbg-stick-scale");
+      const slVal = document.getElementById("dbg-stick-scale-val");
+      if (slEl) {
+        const lo = parseFloat(slEl.min), hi = parseFloat(slEl.max);
+        const clamped = Math.max(lo, Math.min(hi, heightScale));
+        slEl.value = clamped.toFixed(2);
+        if (slVal) slVal.textContent = clamped.toFixed(2);
+      }
+      APP.savedStickScale = heightScale;
+      try { localStorage.setItem("vr_boxing_stick_scale", String(heightScale)); } catch (e) {}
+      autoScaleMsg = " Auto-scaled stick figure: " + heightScale.toFixed(2) + "x";
+    } else {
+      console.warn("[calib] height-scale skipped (userHeight=" + userHeight.toFixed(3) +
+                   ", uk1Height=" + uk1Height.toFixed(3) + ")");
+    }
+  } catch (e) {
+    console.warn("[calib] auto height-scale failed:", e);
+  }
+
   const okMsg = "<span style='color:var(--good)'>&#10004; T-pose calibrated</span>";
   $("tpose-status").innerHTML = okMsg;
   const vidStatus = $("tpose-status-video");
   if (vidStatus) vidStatus.innerHTML = okMsg;
   $("stat-cal").textContent = "Yes";
   $("dot-cal").className = "dot green";
-  toast("T-pose calibrated.", "success");
+  toast("T-pose calibrated." + autoScaleMsg, "success");
 }
 
 $("btn-tpose-calib").addEventListener("click", () => {
@@ -2914,8 +2986,13 @@ function syncStickFigureToCharacter() {
   const uk1Size = uk1Box.getSize(new THREE.Vector3());
   const uk1Center = uk1Box.getCenter(new THREE.Vector3());
 
+  // Use calibrated user height if available (set by finalizeCalibration);
+  // otherwise fall back to the static MediaPipe baseline (~1.75m).
+  const baselineHeight = (APP.userHeightMP && APP.userHeightMP > 0.1)
+    ? APP.userHeightMP
+    : STICK_MEDIAPIPE_BASELINE_HEIGHT;
   const scale = (uk1Size.y > 1e-4)
-    ? uk1Size.y / STICK_MEDIAPIPE_BASELINE_HEIGHT
+    ? uk1Size.y / baselineHeight
     : 1;
   STICK._scale = scale;
   STICK._uk1Box = uk1Box;
@@ -3383,6 +3460,22 @@ function openPopoutCamera() {
   stickOverrideEl.addEventListener("change", () => {
     const app = getAPP();
     if (app) app.stickOverride = stickOverrideEl.checked;
+    // On TURN-ON: snapshot the stick group's CURRENT scale/pos/rot into the
+    // sliders so flipping the override doesn't suddenly jump the figure.
+    if (stickOverrideEl.checked) {
+      const stk = getSTICK();
+      if (stk && stk.group) {
+        const s = stk.group.scale.x;
+        const p = stk.group.position;
+        const r = stk.group.rotation;
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+        stickScaleEl.value = clamp(s, parseFloat(stickScaleEl.min), parseFloat(stickScaleEl.max)).toFixed(2);
+        stickXEl.value     = clamp(p.x, parseFloat(stickXEl.min), parseFloat(stickXEl.max)).toFixed(2);
+        stickYEl.value     = clamp(p.y, parseFloat(stickYEl.min), parseFloat(stickYEl.max)).toFixed(2);
+        stickZEl.value     = clamp(p.z, parseFloat(stickZEl.min), parseFloat(stickZEl.max)).toFixed(2);
+        stickRotYEl.value  = Math.round(radToDeg(r.y));
+      }
+    }
     updateStickSliderEnabled();
     applyStickManual();
   });
